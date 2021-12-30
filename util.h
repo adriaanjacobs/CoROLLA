@@ -1,4 +1,6 @@
 #pragma once
+#include <llvm/IR/PassManager.h>
+#include <llvm/Analysis/LoopAnalysisManager.h>
 
 #if 0
 #ifndef BOOST_STACKTRACE_USE_BACKTRACE
@@ -54,3 +56,10 @@ struct run_on_destruct {
         }                                           \
     } while (false)
 
+inline llvm::FunctionAnalysisManager& getFAM(llvm::Module& module, llvm::ModuleAnalysisManager& MAM) {
+    return MAM.getResult<llvm::FunctionAnalysisManagerModuleProxy>(module).getManager();
+}
+
+inline llvm::LoopAnalysisManager& getLAM(llvm::Function& function, llvm::FunctionAnalysisManager& FAM) {
+    return FAM.getResult<llvm::LoopAnalysisManagerFunctionProxy>(function).getManager();
+}
