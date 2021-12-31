@@ -59,6 +59,9 @@ struct run_on_destruct {
         }                                           \
     } while (false)
 
+#define BREAKPOINT() \
+    asm("int $3")
+
 inline llvm::FunctionAnalysisManager& getFAM(llvm::Module& module, llvm::ModuleAnalysisManager& MAM) {
     return MAM.getResult<llvm::FunctionAnalysisManagerModuleProxy>(module).getManager();
 }
