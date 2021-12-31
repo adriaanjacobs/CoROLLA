@@ -169,8 +169,8 @@ void PointerDetector::mark_actual_vs_formal_args(llvm::Module& module) {
 
     BTW, not all pointer modifications are top-level: atomicrmw 
 */
-PointerDetector::Detector(llvm::Module& module, [[maybe_unused]] llvm::ModuleAnalysisManager &MAM) :
-    postDomTrees{std::make_shared<decltype(postDomTrees)::element_type>()}
+PointerDetector::Detector(llvm::Module& module, llvm::ModuleAnalysisManager &MAM) :
+    module{module}, MAM{MAM}
 {
     identify_start_pointers(module);
 
@@ -267,6 +267,8 @@ void PointerDetector::mark_pointer_uses(const llvm::DataLayout& dataLayout, llvm
 }
 
 void PointerDetector::mark_pointer_origins(const llvm::DataLayout& dataLayout, llvm::Value* pointer) {
+    auto& FAM = getFAM(module, MAM);
+
     llvm::Value* current = pointer;
     mark_value(dataLayout, current, POINTER);
     bool done = false;
@@ -440,7 +442,7 @@ void PointerDetector::mark_pointer_origins(const llvm::DataLayout& dataLayout, l
         auto func = functionOf(oldCurrent);
         if (func) {
             auto oldInst = llvm::cast<llvm::Instruction>(oldCurrent);
-            auto& postDomTree = getPostDomTree(func);
+            auto& postDomTree = FAM.getResult<llvm::PostDominatorTreeAnalysis>(*func);
             auto oldNode = postDomTree.getNode(oldInst->getParent());
             auto curNode = postDomTree.getNode(llvm::isa<llvm::Instruction>(current) ? llvm::cast<llvm::Instruction>(current)->getParent() : &func->getEntryBlock());
             if (postDomTree.dominates(oldNode, curNode)) {
@@ -461,6 +463,8 @@ std::optional<PointerDetector::ValueType> PointerDetector::is_unconfirmed_pointe
         assert(size <= passedInstrs.size());
         passedInstrs.erase(passedInstrs.begin() + size, passedInstrs.end());
     });
+
+    auto& FAM = getFAM(module, MAM);
 
     while (!is_confirmed_pointer(current)) {
         auto oldCurrent = current;
@@ -703,7 +707,7 @@ std::optional<PointerDetector::ValueType> PointerDetector::is_unconfirmed_pointe
         auto func = functionOf(oldCurrent);
         if (func) {
             auto oldInst = llvm::cast<llvm::Instruction>(oldCurrent);
-            auto& postDomTree = getPostDomTree(func);
+            auto& postDomTree = FAM.getResult<llvm::PostDominatorTreeAnalysis>(*func);
             auto oldNode = postDomTree.getNode(oldInst->getParent());
             auto curNode = postDomTree.getNode(llvm::isa<llvm::Instruction>(current) ? llvm::cast<llvm::Instruction>(current)->getParent() : &func->getEntryBlock());
             if (!postDomTree.dominates(oldNode, curNode))
@@ -712,6 +716,45 @@ std::optional<PointerDetector::ValueType> PointerDetector::is_unconfirmed_pointe
     }
     assert(is_confirmed_pointer(current));
     return POINTER;
+}
+
+std::optional<PointerDetector::BinaryOpValueTypes> PointerDetector::findBinaryOpValueTypes(llvm::BinaryOperator* binaryOp) {
+    auto lhs = binaryOp->getOperand(0);
+    auto rhs = binaryOp->getOperand(1);
+
+    auto& dataLayout = module.getDataLayout();
+
+    if (llvm::isa<llvm::ConstantInt>(rhs)) {
+        assert(!llvm::isa<llvm::ConstantInt>(lhs));
+        return BinaryOpValueTypes{lhs, rhs};
+    } else if (llvm::isa<llvm::ConstantInt>(lhs)) {
+        assert(!llvm::isa<llvm::ConstantInt>(rhs));
+        return BinaryOpValueTypes{rhs, lhs};
+    } else if (is_confirmed_pointer(lhs)) {
+        assert(!is_confirmed_pointer(rhs));
+        return BinaryOpValueTypes{lhs, rhs};
+    } else if(is_confirmed_pointer(rhs)) {
+        assert(!is_confirmed_pointer(lhs));
+        return BinaryOpValueTypes{rhs, lhs};
+    } else if (auto lhStatus = is_unconfirmed_pointer(dataLayout, lhs)) {
+        assert(lhStatus.has_value());
+        auto rhStatus = is_unconfirmed_pointer(dataLayout, rhs);
+        if (lhStatus == PointerDetector::INTEGER) {
+            assert(!rhStatus.has_value() || rhStatus.value() == PointerDetector::POINTER);
+            return BinaryOpValueTypes{rhs, lhs};
+        } else if (lhStatus == PointerDetector::POINTER) {
+            assert(!rhStatus.has_value() || rhStatus.value() == PointerDetector::INTEGER);
+            return BinaryOpValueTypes{lhs, rhs};
+        } else HANDLE_UNKOWN_VALUE(binaryOp);
+    } else if (auto rhStatus = is_unconfirmed_pointer(dataLayout, rhs)) {
+        assert(rhStatus.has_value());
+        auto lhStatus = is_unconfirmed_pointer(dataLayout, rhs);
+        if (rhStatus == PointerDetector::INTEGER && (!lhStatus.has_value() || lhStatus.value() == PointerDetector::POINTER)) {
+            return BinaryOpValueTypes{rhs, lhs};
+        } else if (rhStatus == PointerDetector::POINTER && (!lhStatus.has_value() || lhStatus.value() == PointerDetector::INTEGER)) {
+            return BinaryOpValueTypes{lhs, rhs};
+        } else HANDLE_UNKOWN_VALUE(binaryOp);
+    } else return std::nullopt;
 }
 
 llvm::Function* PointerDetector::functionOf(llvm::Value* val) {

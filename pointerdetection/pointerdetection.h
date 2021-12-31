@@ -21,7 +21,6 @@ public:
     struct Detector {
         llvm::DenseSet<llvm::Value*> pointers;
         llvm::DenseSet<llvm::Value*> negatedPointers;
-        mutable std::shared_ptr<llvm::DenseMap<llvm::Function*,llvm::PostDominatorTree>> postDomTrees;
 
         enum ValueType { NEGATED_POINTER = -1, INTEGER = 0, POINTER = 1 };
 
@@ -33,15 +32,19 @@ public:
         bool is_confirmed_pointer(llvm::Value* val) const { return pointers.contains(val); }
         std::optional<ValueType> is_unconfirmed_pointer(const llvm::DataLayout& dataLayout, llvm::Value* val) const;
 
-        llvm::PostDominatorTree& getPostDomTree(llvm::Function* func) const {
-            auto domIt = postDomTrees->try_emplace(func, *func).first;
-            assert(domIt != postDomTrees->end());
-            return domIt->getSecond();
-        }
+        struct BinaryOpValueTypes {
+            llvm::Value* pointerOperand;
+            llvm::Value* nonPointerOperand;
+        };
 
-        Detector(llvm::Module &M, [[maybe_unused]] llvm::ModuleAnalysisManager &MAM);
+        std::optional<BinaryOpValueTypes> findBinaryOpValueTypes(llvm::BinaryOperator* binaryOp);
+
+        Detector(llvm::Module &M, llvm::ModuleAnalysisManager &MAM);
         
         static llvm::Function* functionOf(llvm::Value* val);
+    private:
+        llvm::Module& module;
+        llvm::ModuleAnalysisManager& MAM;
     };
 
     explicit PointerDetectionAnalysis() = default;
