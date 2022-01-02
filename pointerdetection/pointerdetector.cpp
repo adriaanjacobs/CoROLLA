@@ -394,6 +394,29 @@ void PointerDetector::mark_pointer_origins(const llvm::DataLayout& dataLayout, l
                         }
                     }
                 } break;
+                case llvm::Instruction::Mul: {
+                    assert(lhStatus.has_value() || rhStatus.has_value());
+                    if ((!rhStatus.has_value() || rhStatus == INTEGER)) {
+                        ASSERT_ELSE_UNKOWN(llvm::isa<llvm::ConstantInt>(rhs) && llvm::cast<llvm::ConstantInt>(rhs)->getValue() == -1, binaryOp);
+                        toMark.push_back({lhs, NEGATED_POINTER});
+                        toMark.push_back({rhs, INTEGER});
+                        done = true;
+                    } else HANDLE_UNKOWN_VALUE(binaryOp);
+
+                    // if (lhStatus.has_value()) {
+                    //     ASSERT_ELSE_UNKOWN(!rhStatus.has_value() || rhStatus == INTEGER, binaryOp);
+                    //     toMark.push_back({lhs, lhStatus.value()});
+                    //     toMark.push_back({rhs, INTEGER});
+                    //     if (lhStatus == POINTER)
+                    //         current = lhs;
+                    //     else done = true;
+                    // } else {
+                    //     assert(rhStatus.has_value());
+                    //     ASSERT_ELSE_UNKOWN(!lhStatus.has_value() || lhStatus == INTEGER, binaryOp);
+                    //     toMark.push_back({rhs, rhStatus.value()});
+                    //     toMark.push_back({lhs, INTEGER});
+                    // }
+                } break;
                 default: {
                     HANDLE_UNKOWN_VALUE(current);
                 }
@@ -436,7 +459,7 @@ void PointerDetector::mark_pointer_origins(const llvm::DataLayout& dataLayout, l
             HANDLE_UNKOWN_VALUE(current);
         }
 
-        ASSERT_ELSE_UNKOWN(oldCurrent != current, current);
+        ASSERT_ELSE_UNKOWN(done || oldCurrent != current, current);
 
         assert(!llvm::isa<llvm::Argument>(oldCurrent));
         auto func = functionOf(oldCurrent);
@@ -682,6 +705,35 @@ std::optional<PointerDetector::ValueType> PointerDetector::is_unconfirmed_pointe
                         assert(abs(result) <= 1);
                         return static_cast<ValueType>(result);
                     } else HANDLE_UNKOWN_VALUE(binaryOp);
+                } break;
+                case llvm::BinaryOperator::Mul: {
+                    // ptr * int = ptr 
+                    // ptr * ptr = INVALID
+                    // ptr * neg_ptr = INVALID
+                    // int * int = int
+                    // int * ptr = ptr
+                    // int * neg_ptr = neg_ptr
+                    // neg_ptr * int = neg_ptr
+                    // neg_ptr * ptr = INVALID
+                    // neg_ptr * neg_ptr = INVALID
+
+                    assert(lhs.has_value() && rhs.has_value());
+
+                    if (lhs == POINTER || lhs == NEGATED_POINTER) {
+                        ASSERT_ELSE_UNKOWN(rhs == INTEGER, binaryOp);
+                        auto rh = llvm::dyn_cast<llvm::ConstantInt>(binaryOp->getOperand(1));
+                        ASSERT_ELSE_UNKOWN(rh && rh->getValue().abs() == 1, binaryOp);
+                        return lhs;
+                    } else if (rhs == POINTER || rhs == NEGATED_POINTER) {
+                        ASSERT_ELSE_UNKOWN(lhs == INTEGER, binaryOp);
+                        auto lh = llvm::dyn_cast<llvm::ConstantInt>(binaryOp->getOperand(0));
+                        ASSERT_ELSE_UNKOWN(lh && lh->getValue().abs() == 1, binaryOp);
+                        return POINTER;
+                    } else {
+                        ASSERT_ELSE_UNKOWN(lhs == INTEGER && rhs == INTEGER, binaryOp);
+                        return INTEGER;
+                    }
+                    assert(false);
                 } break;
                 default: {
                     HANDLE_UNKOWN_VALUE(current);
