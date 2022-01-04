@@ -69,16 +69,3 @@ inline llvm::FunctionAnalysisManager& getFAM(llvm::Module& module, llvm::ModuleA
 inline llvm::LoopAnalysisManager& getLAM(llvm::Function& function, llvm::FunctionAnalysisManager& FAM) {
     return FAM.getResult<llvm::LoopAnalysisManagerFunctionProxy>(function).getManager();
 }
-
-inline bool isAllocationSite(llvm::Value* pointer) {
-    if (llvm::isa<llvm::AllocaInst>(pointer)) {
-        return true;
-    } else if (auto callInst = llvm::dyn_cast<llvm::CallBase>(pointer)) {
-        auto calledFunc = callInst->getCalledFunction();
-        auto allocFuncs = std::experimental::make_array("mmap", "malloc", "mmap2", "mmap64", "calloc", "realloc", "aligned_alloc", "__errno_location");
-        return calledFunc && llvm::is_contained(allocFuncs, calledFunc->getName());
-    } else if (llvm::isa<llvm::GlobalVariable>(pointer)) {
-        return true;
-    }
-    return false;
-}

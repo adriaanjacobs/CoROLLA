@@ -1,5 +1,7 @@
 #include <util.h>
+#include "mpk_instrument/pass.h"
 #include "pointerdetection.h"
+#include "wrapgeps/wrapgeps.h"
 
 #include <bit>
 #include <bitset>
@@ -20,7 +22,7 @@ void PointerDetector::identify_start_pointers(llvm::Module& module) {
     for (auto& func : module) {
         for (auto& bb : func) {
             for (auto& inst : bb) {
-                if (isAllocationSite(&inst))
+                if (isAllocationCall(&inst))
                     mark_value(dataLayout, &inst, POINTER);
 
                 if (inst.mayReadOrWriteMemory()) {
@@ -55,6 +57,48 @@ void PointerDetector::identify_start_pointers(llvm::Module& module) {
     }
 
     llvm::outs() << pointers.size() << " start pointers identified.\n";
+}
+
+llvm::Value* PointerDetector::strip_pointer_casts(llvm::Value *pointer) {
+    const auto& dataLayout = module.getDataLayout();
+    auto& boundsChecker = MAM.getResult<IsInBoundsAnalysis>(module);
+
+    while (true) {
+        // ASSERT_ELSE_UNKOWN(is_confirmed_pointer(pointer), pointer);
+
+        if (auto gep = llvm::dyn_cast<llvm::GEPOperator>(pointer)) {
+            auto operand = gep->getPointerOperand();
+            auto offset = boundsChecker.findConstantOffset(gep);
+            if (offset.has_value() && offset->isNullValue()) {
+                pointer = operand;
+            } else break;
+        } else if (auto binaryOp = llvm::dyn_cast<llvm::BinaryOperator>(pointer)) {
+            auto offset = boundsChecker.findConstantOffset(binaryOp);
+            if (offset.has_value() && offset->isNullValue()) {
+                auto operandTypes = findBinaryOpValueTypes(binaryOp);
+                assert(operandTypes.has_value());
+                pointer = operandTypes->pointerOperand;
+            } else break;
+        } else if (auto castInst = llvm::dyn_cast<llvm::CastInst>(pointer)) {
+            switch (castInst->getOpcode()) {
+                case llvm::Instruction::CastOps::IntToPtr:
+                case llvm::Instruction::CastOps::PtrToInt:
+                    assert(castInst->isNoopCast(dataLayout));
+                case llvm::Instruction::CastOps::BitCast: {
+                    pointer = castInst->getOperand(0);
+                } break;
+                default:
+                    HANDLE_UNKOWN_VALUE(pointer);
+            }
+        } else if (auto bitcastOp = llvm::dyn_cast<llvm::BitCastOperator>(pointer)) {
+            pointer = bitcastOp->getOperand(0);
+        } else if (AllocWrapperDetector::isStaticAllocationSite(pointer) || GepDetector::isaSafePointerSourceType(pointer)
+                    || llvm::isa<llvm::ConstantPointerNull, llvm::ConstantInt>(pointer)
+        ) {
+            break;
+        } else HANDLE_UNKOWN_VALUE(pointer);
+    }
+    return pointer;
 }
 
 void PointerDetector::mark_actual_vs_formal_args(llvm::Module& module) {
@@ -441,7 +485,7 @@ void PointerDetector::mark_pointer_origins(const llvm::DataLayout& dataLayout, l
             }
             done = true;
             break;
-        } else if (isAllocationSite(current)
+        } else if (AllocWrapperDetector::isStaticAllocationSite(current)
                     || llvm::isa<llvm::CallBase>(current)
                     || llvm::isa<llvm::Argument>(current)
                     || llvm::isa<llvm::ConstantAggregate>(current)

@@ -24,13 +24,9 @@ public:
 
         enum ValueType { NEGATED_POINTER = -1, INTEGER = 0, POINTER = 1 };
 
-        void identify_start_pointers(llvm::Module& module);
-        void mark_pointer_origins(const llvm::DataLayout& dataLayout, llvm::Value* pointer);
-        void mark_pointer_uses(const llvm::DataLayout& dataLayout, llvm::Value* pointer);
-        void mark_actual_vs_formal_args(llvm::Module& module);
-        void mark_value(const llvm::DataLayout& dataLayout, llvm::Value*, ValueType status);
         bool is_confirmed_pointer(llvm::Value* val) const { return pointers.contains(val); }
         std::optional<ValueType> is_unconfirmed_pointer(const llvm::DataLayout& dataLayout, llvm::Value* val) const;
+        llvm::Value* strip_pointer_casts(llvm::Value* pointer);
 
         struct BinaryOpValueTypes {
             llvm::Value* pointerOperand;
@@ -45,6 +41,22 @@ public:
     private:
         llvm::Module& module;
         llvm::ModuleAnalysisManager& MAM;
+
+        void identify_start_pointers(llvm::Module& module);
+        void mark_pointer_origins(const llvm::DataLayout& dataLayout, llvm::Value* pointer);
+        void mark_pointer_uses(const llvm::DataLayout& dataLayout, llvm::Value* pointer);
+        void mark_actual_vs_formal_args(llvm::Module& module);
+        void mark_value(const llvm::DataLayout& dataLayout, llvm::Value*, ValueType status);
+
+        static bool isAllocationCall(llvm::Instruction* inst) {
+            if (AllocWrapperDetector::isStaticAllocationSite(inst))
+                return true;
+            else if (auto callInst = llvm::dyn_cast<llvm::CallBase>(inst)) {
+                if (callInst->getCalledFunction() && AllocWrapperDetector::isKnownLibcAllocator(callInst->getCalledFunction()))
+                    return true;
+            }
+            return false;
+        }
     };
 
     explicit PointerDetectionAnalysis() = default;
