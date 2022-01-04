@@ -75,7 +75,7 @@ inline bool isAllocationSite(llvm::Value* pointer) {
         return true;
     } else if (auto callInst = llvm::dyn_cast<llvm::CallBase>(pointer)) {
         auto calledFunc = callInst->getCalledFunction();
-        auto allocFuncs = std::experimental::make_array("mmap", "malloc", "mmap2", "mmap64", "calloc", "realloc", "aligned_alloc");
+        auto allocFuncs = std::experimental::make_array("mmap", "malloc", "mmap2", "mmap64", "calloc", "realloc", "aligned_alloc", "__errno_location");
         return calledFunc && llvm::is_contained(allocFuncs, calledFunc->getName());
     } else if (llvm::isa<llvm::GlobalVariable>(pointer)) {
         return true;
