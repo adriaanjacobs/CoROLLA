@@ -447,6 +447,7 @@ void PointerDetector::mark_pointer_origins(const llvm::DataLayout& dataLayout, l
                     || llvm::isa<llvm::ConstantAggregate>(current)
                     || llvm::isa<llvm::ConstantPointerNull>(current)
                     || llvm::isa<llvm::ExtractElementInst>(current)
+                    || llvm::isa<llvm::ExtractValueInst>(current)
                     || llvm::isa<llvm::UndefValue>(current)
         ) {
             done = true;
