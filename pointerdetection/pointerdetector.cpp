@@ -17,27 +17,27 @@ void PointerDetector::identify_start_pointers(llvm::Module& module) {
     // Initialize with all known pointers
     auto& dataLayout = module.getDataLayout();
     for (auto& global : module.globals()) {
-        mark_value(dataLayout, &global, POINTER);
+        mark_value(&global, POINTER);
     }
     for (auto& func : module) {
         for (auto& bb : func) {
             for (auto& inst : bb) {
                 if (isAllocationCall(&inst))
-                    mark_value(dataLayout, &inst, POINTER);
+                    mark_value(&inst, POINTER);
 
                 if (inst.mayReadOrWriteMemory()) {
                     auto pointerOperand = llvm::getLoadStorePointerOperand(&inst);
                     if (pointerOperand) {
                         assert(pointerOperand->getType()->isPointerTy());
-                        mark_value(dataLayout, pointerOperand, POINTER);
+                        mark_value(pointerOperand, POINTER);
                     } else if (auto cmpxchgInst = llvm::dyn_cast<llvm::AtomicCmpXchgInst>(&inst)) {
-                        mark_value(dataLayout, cmpxchgInst->getPointerOperand(), POINTER);
+                        mark_value(cmpxchgInst->getPointerOperand(), POINTER);
                     } else if (auto atomicrmwInst = llvm::dyn_cast<llvm::AtomicRMWInst>(&inst)) {
-                        mark_value(dataLayout, atomicrmwInst->getPointerOperand(), POINTER);
+                        mark_value(atomicrmwInst->getPointerOperand(), POINTER);
                     } else if (auto callInst = llvm::dyn_cast<llvm::CallBase>(&inst)) {
                         for (uint i = 0; i < callInst->getNumArgOperands(); i++) {
                             if (callInst->paramHasAttr(i, llvm::Attribute::Dereferenceable)) {
-                                mark_value(dataLayout, callInst->getArgOperand(i), POINTER);
+                                mark_value(callInst->getArgOperand(i), POINTER);
                             }
                         }
                     } else if (llvm::isa<llvm::FenceInst>(&inst)) {
@@ -45,12 +45,6 @@ void PointerDetector::identify_start_pointers(llvm::Module& module) {
                     } else {
                         HANDLE_UNKOWN_VALUE(&inst);
                     }
-                }
-
-                bool canBeNull = false;
-                bool canBeFreed = false;
-                if (inst.getPointerDereferenceableBytes(module.getDataLayout(), canBeNull, canBeFreed) > 0) {
-                    // print
                 }
             }
         }
@@ -162,7 +156,7 @@ void PointerDetector::mark_actual_vs_formal_args(llvm::Module& module) {
                         for (uint i = 0; i < declaredArgCount; i++) {
                             auto arg = callInst->getArgOperand(i);
                             if (funcDesc.argDescs[i].isPointer) {
-                                mark_value(dataLayout, arg, POINTER);
+                                mark_value(arg, POINTER);
                             } else {
                                 funcDesc.argDescs[i].count += is_confirmed_pointer(arg);
                             }
@@ -170,7 +164,7 @@ void PointerDetector::mark_actual_vs_formal_args(llvm::Module& module) {
 
                         if (funcDesc.retIsPointer) {
                             assert(!callInst->getType()->isVoidTy());
-                            mark_value(dataLayout, callInst, POINTER);
+                            mark_value(callInst, POINTER);
                         } else {
                             funcDesc.pointerCalls += is_confirmed_pointer(callInst);
                         }
@@ -186,7 +180,7 @@ void PointerDetector::mark_actual_vs_formal_args(llvm::Module& module) {
         // if, for all invocations of this function, a specific argument is used as a pointer, the argument must be a pointer when used inside this function as well
         for (uint i = 0; i < func.arg_size(); i++) {
             if (funcDesc.argDescs[i].count == funcDesc.invocations && funcDesc.invocations != 0)
-                mark_value(dataLayout, func.getArg(i), POINTER);
+                mark_value(func.getArg(i), POINTER);
         }
 
         // if all invocations of this function are used as pointer values, all return values in this functions must be pointers
@@ -194,7 +188,7 @@ void PointerDetector::mark_actual_vs_formal_args(llvm::Module& module) {
             for (auto& bb : func) {
                 assert(!func.getReturnType()->isVoidTy());
                 if (auto retInst = llvm::dyn_cast<llvm::ReturnInst>(bb.getTerminator())) {
-                    mark_value(dataLayout, retInst->getReturnValue(), POINTER);
+                    mark_value(retInst->getReturnValue(), POINTER);
                 }
             }
         }
@@ -229,12 +223,12 @@ PointerDetector::Detector(llvm::Module& module, llvm::ModuleAnalysisManager &MAM
 
         cpy = pointers;
         for (auto pointer : cpy) {
-            mark_pointer_origins(module.getDataLayout(), pointer);
+            mark_pointer_origins(pointer);
         }
         llvm::outs() << "\tGot backwards markings. " << pointers.size() << " total pointers identified. \n";
 
         for (auto pointer : cpy) {
-            mark_pointer_uses(module.getDataLayout(), pointer);
+            mark_pointer_uses(pointer);
         }
         llvm::outs() << "\tGot forwards markings. " << pointers.size() << " total pointers identified. \n";
 
@@ -256,7 +250,7 @@ PointerDetector::Detector(llvm::Module& module, llvm::ModuleAnalysisManager &MAM
     llvm::outs() << pointers.size() << " pointers identified.\n";
 }
 
-void PointerDetector::mark_value(const llvm::DataLayout& dataLayout, llvm::Value* val, ValueType status) {
+void PointerDetector::mark_value(llvm::Value* val, ValueType status) {
     switch (status) {
         case POINTER: {
             if (auto addInst = llvm::dyn_cast<llvm::AddOperator>(val)) {
@@ -267,7 +261,7 @@ void PointerDetector::mark_value(const llvm::DataLayout& dataLayout, llvm::Value
                     }
                 }
             }
-            ASSERT_ELSE_UNKOWN(dataLayout.getTypeSizeInBits(val->getType()) == 64, val);
+            ASSERT_ELSE_UNKOWN(module.getDataLayout().getTypeSizeInBits(val->getType()) == 64, val);
             pointers.insert(val);
         } break;
         case INTEGER: { /* nothing for now */ } break;
@@ -278,7 +272,7 @@ void PointerDetector::mark_value(const llvm::DataLayout& dataLayout, llvm::Value
 
 // I think we look through pointer casts here, but it's not a problem since we're marking them during
 // mark_pointer_origins later I think.
-void PointerDetector::mark_pointer_uses(const llvm::DataLayout& dataLayout, llvm::Value* pointer) {
+void PointerDetector::mark_pointer_uses(llvm::Value* pointer) {
     for (auto& use : pointer->uses()) {
         auto const user = use.getUser();
         if (is_confirmed_pointer(user))
@@ -299,22 +293,23 @@ void PointerDetector::mark_pointer_uses(const llvm::DataLayout& dataLayout, llvm
             auto argOperand = use.get();
             assert(pointer == argOperand);
         } else {
-            auto userStatus = is_unconfirmed_pointer(dataLayout, user);
+            auto userStatus = is_unconfirmed_pointer(user);
             if (userStatus.has_value()) {
                 if (userStatus == POINTER) {
-                    ASSERT_ELSE_UNKOWN(dataLayout.getTypeSizeInBits(user->getType()) == 64, user);
+                    ASSERT_ELSE_UNKOWN(module.getDataLayout().getTypeSizeInBits(user->getType()) == 64, user);
                 }
-                mark_value(dataLayout, user, userStatus.value());
+                mark_value(user, userStatus.value());
             }
         }
     }
 }
 
-void PointerDetector::mark_pointer_origins(const llvm::DataLayout& dataLayout, llvm::Value* pointer) {
+void PointerDetector::mark_pointer_origins(llvm::Value* pointer) {
     auto& FAM = getFAM(module, MAM);
+    auto& dataLayout = module.getDataLayout();
 
     llvm::Value* current = pointer;
-    mark_value(dataLayout, current, POINTER);
+    mark_value(current, POINTER);
     bool done = false;
     while (!done) {
         llvm::SmallVector<std::pair<llvm::Value*, ValueType>> toMark;
@@ -351,8 +346,8 @@ void PointerDetector::mark_pointer_origins(const llvm::DataLayout& dataLayout, l
             auto lhs = binaryOp->getOperand(0);
             auto rhs = binaryOp->getOperand(1);
 
-            auto lhStatus = is_unconfirmed_pointer(dataLayout, lhs);
-            auto rhStatus = is_unconfirmed_pointer(dataLayout, rhs);
+            auto lhStatus = is_unconfirmed_pointer(lhs);
+            auto rhStatus = is_unconfirmed_pointer(rhs);
 
             if (!lhStatus.has_value() && !rhStatus.has_value()) {
                 // TODO: maybe check these cases manually because we're losing info here
@@ -515,7 +510,7 @@ void PointerDetector::mark_pointer_origins(const llvm::DataLayout& dataLayout, l
             auto curNode = postDomTree.getNode(llvm::isa<llvm::Instruction>(current) ? llvm::cast<llvm::Instruction>(current)->getParent() : &func->getEntryBlock());
             if (postDomTree.dominates(oldNode, curNode)) {
                 for (auto mark : toMark)
-                    mark_value(dataLayout, mark.first, mark.second);
+                    mark_value(mark.first, mark.second);
             } else done = true;
         }
     }
@@ -523,7 +518,7 @@ void PointerDetector::mark_pointer_origins(const llvm::DataLayout& dataLayout, l
     assert(done);
 }
 
-std::optional<PointerDetector::ValueType> PointerDetector::is_unconfirmed_pointer(const llvm::DataLayout& dataLayout, llvm::Value* current) const {
+std::optional<PointerDetector::ValueType> PointerDetector::is_unconfirmed_pointer(llvm::Value* current) const {
     static thread_local std::vector<const llvm::Value*> passedInstrs;
     const auto size = passedInstrs.size();
     // llvm::outs() << rand() << ": Called findoffset (nested level: " << size << ")\n";
@@ -533,6 +528,7 @@ std::optional<PointerDetector::ValueType> PointerDetector::is_unconfirmed_pointe
     });
 
     auto& FAM = getFAM(module, MAM);
+    auto& dataLayout = module.getDataLayout();
 
     while (!is_confirmed_pointer(current)) {
         auto oldCurrent = current;
@@ -564,11 +560,11 @@ std::optional<PointerDetector::ValueType> PointerDetector::is_unconfirmed_pointe
             return INTEGER;
         } else if (auto phiNode = llvm::dyn_cast<llvm::PHINode>(current)) {
 
-            std::optional<ValueType> ret = {};
+            std::optional<ValueType> ret = std::nullopt;
             for (auto& incomingUse : phiNode->incoming_values()) {
                 auto incomingVal = incomingUse.get();
                 if (!llvm::is_contained(passedInstrs, incomingVal)) {
-                    auto pointerStatus = is_unconfirmed_pointer(dataLayout, incomingVal);
+                    auto pointerStatus = is_unconfirmed_pointer(incomingVal);
                     if (pointerStatus.has_value()) {
                         if (ret.has_value()) {
                             if (pointerStatus == INTEGER && ret == POINTER)
@@ -582,13 +578,13 @@ std::optional<PointerDetector::ValueType> PointerDetector::is_unconfirmed_pointe
                             }
                             assert(pointerStatus.value() == ret.value());
                         } else ret = pointerStatus;
-                    } else return {};
-                } else return {};
+                    } else return std::nullopt;
+                } else return std::nullopt;
             }
             return ret;
         } else if (auto selectInst = llvm::dyn_cast<llvm::SelectInst>(current)) {
-            auto optionA = is_unconfirmed_pointer(dataLayout, selectInst->getTrueValue());
-            auto optionB = is_unconfirmed_pointer(dataLayout, selectInst->getFalseValue());
+            auto optionA = is_unconfirmed_pointer(selectInst->getTrueValue());
+            auto optionB = is_unconfirmed_pointer(selectInst->getFalseValue());
 
             if (optionA.has_value() && optionB.has_value()) {
                 if (optionA == POINTER && optionB == INTEGER)
@@ -602,22 +598,22 @@ std::optional<PointerDetector::ValueType> PointerDetector::is_unconfirmed_pointe
                 }
                 ASSERT_ELSE_UNKOWN(optionA.value() == optionB.value(), selectInst);
                 return optionA.value();
-            } else return {};
+            } else return std::nullopt;
         } else if (auto gepInst = llvm::dyn_cast<llvm::GetElementPtrInst>(current)) {
             current = gepInst->getPointerOperand();
         } else if (auto gepOperator = llvm::dyn_cast<llvm::GEPOperator>(current)) {
             current = gepOperator->getPointerOperand();
         } else if (llvm::isa<llvm::LoadInst, llvm::CallBase, llvm::Argument, llvm::ExtractElementInst, llvm::ExtractValueInst>(current)) {
-            return {};
+            return std::nullopt;
         } else if (llvm::isa<llvm::InsertElementInst, llvm::InsertValueInst>(current)) {
-            return {}; // these are aggregates/vectors, not pointers.
+            return std::nullopt; // these are aggregates/vectors, not pointers.
             // If we want to continue tracking these, we have to represent pointers differently (as val + idx)
         } else if (auto binaryOp = llvm::dyn_cast<llvm::BinaryOperator>(current)) {
-            auto lhs = is_unconfirmed_pointer(dataLayout, binaryOp->getOperand(0));
-            auto rhs = is_unconfirmed_pointer(dataLayout, binaryOp->getOperand(1));
+            auto lhs = is_unconfirmed_pointer(binaryOp->getOperand(0));
+            auto rhs = is_unconfirmed_pointer(binaryOp->getOperand(1));
 
             if (!lhs.has_value() || !rhs.has_value())
-                return {};
+                return std::nullopt;
 
             switch (binaryOp->getOpcode()) {
                 case llvm::BinaryOperator::SDiv: {
@@ -707,7 +703,7 @@ std::optional<PointerDetector::ValueType> PointerDetector::is_unconfirmed_pointe
                                         return INTEGER;
                                     else HANDLE_UNKOWN_VALUE(binaryOp);
                                 } else return INTEGER;
-                            } else return {}; 
+                            } else return std::nullopt; 
                         } else {
                             assert(lhs == INTEGER && rhs == INTEGER);
                             return INTEGER;
@@ -833,9 +829,9 @@ std::optional<PointerDetector::BinaryOpValueTypes> PointerDetector::findBinaryOp
     } else if(is_confirmed_pointer(rhs)) {
         assert(!is_confirmed_pointer(lhs));
         return BinaryOpValueTypes{rhs, lhs};
-    } else if (auto lhStatus = is_unconfirmed_pointer(dataLayout, lhs)) {
+    } else if (auto lhStatus = is_unconfirmed_pointer(lhs)) {
         assert(lhStatus.has_value());
-        auto rhStatus = is_unconfirmed_pointer(dataLayout, rhs);
+        auto rhStatus = is_unconfirmed_pointer(rhs);
         if (lhStatus == PointerDetector::INTEGER) {
             assert(!rhStatus.has_value() || rhStatus.value() == PointerDetector::POINTER);
             return BinaryOpValueTypes{rhs, lhs};
@@ -843,14 +839,24 @@ std::optional<PointerDetector::BinaryOpValueTypes> PointerDetector::findBinaryOp
             assert(!rhStatus.has_value() || rhStatus.value() == PointerDetector::INTEGER);
             return BinaryOpValueTypes{lhs, rhs};
         } else HANDLE_UNKOWN_VALUE(binaryOp);
-    } else if (auto rhStatus = is_unconfirmed_pointer(dataLayout, rhs)) {
+    } else if (auto rhStatus = is_unconfirmed_pointer(rhs)) {
         assert(rhStatus.has_value());
-        auto lhStatus = is_unconfirmed_pointer(dataLayout, rhs);
+        auto lhStatus = is_unconfirmed_pointer(lhs);
         if (rhStatus == PointerDetector::INTEGER && (!lhStatus.has_value() || lhStatus.value() == PointerDetector::POINTER)) {
             return BinaryOpValueTypes{rhs, lhs};
         } else if (rhStatus == PointerDetector::POINTER && (!lhStatus.has_value() || lhStatus.value() == PointerDetector::INTEGER)) {
             return BinaryOpValueTypes{lhs, rhs};
-        } else HANDLE_UNKOWN_VALUE(binaryOp);
+        } else {
+            llvm::outs() << "rhStatus: " << rhStatus.value() << "\n";
+            llvm::outs() << "lhStatus: ";
+            if (lhStatus.has_value()) {
+                llvm::outs() << lhStatus.value();
+            } else {
+                llvm::outs() << "unkown";
+            }
+            llvm::outs() << "\n";
+            HANDLE_UNKOWN_VALUE(binaryOp);
+        }
     } else return std::nullopt;
 }
 
