@@ -793,6 +793,8 @@ std::optional<PointerDetector::ValueType> PointerDetector::is_unconfirmed_pointe
                     HANDLE_UNKOWN_VALUE(current);
                 } break;
             }
+        } else if (llvm::isa<llvm::Function>(current)) {
+            return POINTER;
         } else HANDLE_UNKOWN_VALUE(current);
 
         assert(oldCurrent != current);
