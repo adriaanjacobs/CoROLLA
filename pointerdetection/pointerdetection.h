@@ -34,10 +34,11 @@ public:
         };
 
         std::optional<BinaryOpValueTypes> findBinaryOpValueTypes(llvm::BinaryOperator* binaryOp);
+        bool funcIsOnlyDirectlyCalled(llvm::Value* function, llvm::DenseSet<llvm::CallBase*>& callSites) const;
+        llvm::DenseSet<llvm::Value*> getIncomingValuesForArgument(llvm::Argument* arg) const;
 
         Detector(llvm::Module &M, llvm::ModuleAnalysisManager &MAM);
         
-        static llvm::Function* functionOf(llvm::Value* val);
     private:
         llvm::Module& module;
         llvm::ModuleAnalysisManager& MAM;

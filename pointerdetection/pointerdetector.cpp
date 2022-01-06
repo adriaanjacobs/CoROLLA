@@ -518,6 +518,68 @@ void PointerDetector::mark_pointer_origins(llvm::Value* pointer) {
     assert(done);
 }
 
+// if this returns false, the callSites do NOT contain the complete set of safe callSites
+bool PointerDetector::funcIsOnlyDirectlyCalled(llvm::Value* function, llvm::DenseSet<llvm::CallBase*>& callSites) const {
+    auto& dataLayout = module.getDataLayout();
+    if (function->getNumUses() == 0)
+        return false;
+
+    for (auto& funcUse : function->uses()) {
+        auto user = funcUse.getUser();
+        assert(function == funcUse.get());
+        if (auto callInst = llvm::dyn_cast<llvm::CallBase>(user)) {
+            if (callInst->getCalledFunction() != function) // the function is passed as argument
+                return false;
+            callSites.insert(callInst);
+        } else if (auto storeInst = llvm::dyn_cast<llvm::StoreInst>(user)) {
+            ASSERT_ELSE_UNKOWN(storeInst->getValueOperand() == function, user);
+            return false;
+        } else if (llvm::isa<llvm::ConstantAggregate, llvm::GlobalVariable, llvm::PtrToIntOperator>(user)) {
+            return false;
+        } else if (auto phiNode = llvm::dyn_cast<llvm::PHINode>(user)) {
+            if (auto constVal = phiNode->hasConstantValue()) {
+                ASSERT_ELSE_UNKOWN(constVal == user, user);
+                return funcIsOnlyDirectlyCalled(constVal, callSites);
+            } else return false;
+        } else if (auto select = llvm::dyn_cast<llvm::SelectInst>(user)) {
+            ASSERT_ELSE_UNKOWN(select->getCondition() != function, user);
+            if (auto constInt = llvm::dyn_cast<llvm::ConstantInt>(select->getCondition())) {
+                return funcIsOnlyDirectlyCalled(function, callSites);
+            } else return false;
+        } else if (auto bitcast = llvm::dyn_cast<llvm::BitCastOperator>(user)) {
+            return funcIsOnlyDirectlyCalled(bitcast, callSites);
+        } else HANDLE_UNKOWN_VALUE(user);
+    }
+    return true;
+}
+
+llvm::DenseSet<llvm::Value*> PointerDetector::getIncomingValuesForArgument(llvm::Argument* argument) const {
+    auto function = argument->getParent();
+
+    llvm::DenseSet<llvm::CallBase*> callSites;
+    bool alwaysDirectlyCalled = funcIsOnlyDirectlyCalled(function, callSites);
+
+    llvm::DenseSet<llvm::Value*> incomingValues;
+
+    bool isComplete = [&] () -> bool {
+        if (alwaysDirectlyCalled) {
+            // collect incoming values for the argument value, in suitable callsites
+            for (auto callInst : callSites) {
+                assert(callInst->getCalledFunction());
+                if (callInst->getCalledFunction() == function && argument->getArgNo() < callInst->arg_size()) {
+                    auto incomingVal = callInst->getArgOperand(argument->getArgNo());
+                    incomingValues.insert(incomingVal);
+                } else return false;
+            }
+            return true;
+        } else return false;
+    }();
+    
+    if (!isComplete)
+        incomingValues.clear();
+    return incomingValues;
+}
+
 std::optional<PointerDetector::ValueType> PointerDetector::is_unconfirmed_pointer(llvm::Value* current) const {
     static thread_local std::vector<const llvm::Value*> passedInstrs;
     const auto size = passedInstrs.size();
@@ -558,26 +620,45 @@ std::optional<PointerDetector::ValueType> PointerDetector::is_unconfirmed_pointe
         } else if (llvm::isa<llvm::ICmpInst>(current)) { // used in f.e. ptr += (a == 0);
             // example: nginx: ngx_http_log_escape
             return INTEGER;
-        } else if (auto phiNode = llvm::dyn_cast<llvm::PHINode>(current)) {
+        } else if (llvm::isa<llvm::PHINode, llvm::Argument>(current)) {
+
+            llvm::SetVector<llvm::Value*> incomingValues; // setvector to maintain deterministic insertion order
+            if (auto phiNode = llvm::dyn_cast<llvm::PHINode>(current)) {
+                for (auto& incomingUse : phiNode->incoming_values()) {
+                    incomingValues.insert(incomingUse.get());
+                }
+            } else {
+                auto argument = llvm::dyn_cast<llvm::Argument>(current);
+                assert(argument);
+                auto argIncomers = getIncomingValuesForArgument(argument);
+                incomingValues.insert(argIncomers.begin(), argIncomers.end());
+                if (incomingValues.empty())
+                    return std::nullopt;
+            }
 
             std::optional<ValueType> ret = std::nullopt;
-            for (auto& incomingUse : phiNode->incoming_values()) {
-                auto incomingVal = incomingUse.get();
+            bool constantInt = false;
+            for (auto incomingVal : incomingValues) {
                 if (!llvm::is_contained(passedInstrs, incomingVal)) {
                     auto pointerStatus = is_unconfirmed_pointer(incomingVal);
                     if (pointerStatus.has_value()) {
                         if (ret.has_value()) {
-                            if (pointerStatus == INTEGER && ret == POINTER)
+                            if (pointerStatus == INTEGER && llvm::isa<llvm::Constant>(incomingVal) && ret == POINTER) {
+                                // upgrade constant integers if they coincide with pointers
                                 pointerStatus = POINTER;
-                            else if (pointerStatus == POINTER && ret == INTEGER)
+                            } else if (pointerStatus == POINTER && ret == INTEGER && constantInt) {
                                 ret = POINTER;
-                            
-                            if (pointerStatus.value() != ret.value()) {
-                                llvm::outs() << "At phinode: " << *phiNode << "\n";
+                            } else if (pointerStatus == NEGATED_POINTER) {
+                                llvm::outs() << "At phinode/argument: " << *current << "\n";
                                 llvm::outs() << "pointerStatus is " << pointerStatus.value() << " and ret is " << ret.value() << "\n";
+                                assert(!"end me");
                             }
-                            assert(pointerStatus.value() == ret.value());
-                        } else ret = pointerStatus;
+                        } else {
+                            ret = pointerStatus;
+                            assert(!constantInt);
+                            if (ret == INTEGER && llvm::isa<llvm::Constant>(incomingVal))
+                                constantInt = true;
+                        }
                     } else return std::nullopt;
                 } else return std::nullopt;
             }
@@ -603,7 +684,7 @@ std::optional<PointerDetector::ValueType> PointerDetector::is_unconfirmed_pointe
             current = gepInst->getPointerOperand();
         } else if (auto gepOperator = llvm::dyn_cast<llvm::GEPOperator>(current)) {
             current = gepOperator->getPointerOperand();
-        } else if (llvm::isa<llvm::LoadInst, llvm::CallBase, llvm::Argument, llvm::ExtractElementInst, llvm::ExtractValueInst>(current)) {
+        } else if (llvm::isa<llvm::LoadInst, llvm::CallBase, llvm::ExtractElementInst, llvm::ExtractValueInst>(current)) {
             return std::nullopt;
         } else if (llvm::isa<llvm::InsertElementInst, llvm::InsertValueInst>(current)) {
             return std::nullopt; // these are aggregates/vectors, not pointers.
@@ -797,17 +878,17 @@ std::optional<PointerDetector::ValueType> PointerDetector::is_unconfirmed_pointe
             return POINTER;
         } else HANDLE_UNKOWN_VALUE(current);
 
-        assert(oldCurrent != current);
-        assert(!llvm::isa<llvm::Argument>(oldCurrent));
-        auto func = functionOf(oldCurrent);
-        if (func) {
-            auto oldInst = llvm::cast<llvm::Instruction>(oldCurrent);
-            auto& postDomTree = FAM.getResult<llvm::PostDominatorTreeAnalysis>(*func);
-            auto oldNode = postDomTree.getNode(oldInst->getParent());
-            auto curNode = postDomTree.getNode(llvm::isa<llvm::Instruction>(current) ? llvm::cast<llvm::Instruction>(current)->getParent() : &func->getEntryBlock());
-            if (!postDomTree.dominates(oldNode, curNode))
-                return std::nullopt;
-        }
+        // assert(oldCurrent != current);
+        // assert(!llvm::isa<llvm::Argument>(oldCurrent));
+        // auto func = functionOf(oldCurrent);
+        // if (func) {
+        //     auto oldInst = llvm::cast<llvm::Instruction>(oldCurrent);
+        //     auto& postDomTree = FAM.getResult<llvm::PostDominatorTreeAnalysis>(*func);
+        //     auto oldNode = postDomTree.getNode(oldInst->getParent());
+        //     auto curNode = postDomTree.getNode(llvm::isa<llvm::Instruction>(current) ? llvm::cast<llvm::Instruction>(current)->getParent() : &func->getEntryBlock());
+        //     if (!postDomTree.dominates(oldNode, curNode))
+        //         return std::nullopt;
+        // }
     }
     assert(is_confirmed_pointer(current));
     return POINTER;
@@ -845,9 +926,9 @@ std::optional<PointerDetector::BinaryOpValueTypes> PointerDetector::findBinaryOp
         assert(rhStatus.has_value());
         auto lhStatus = is_unconfirmed_pointer(lhs);
         if (rhStatus == PointerDetector::INTEGER && (!lhStatus.has_value() || lhStatus.value() == PointerDetector::POINTER)) {
-            return BinaryOpValueTypes{rhs, lhs};
-        } else if (rhStatus == PointerDetector::POINTER && (!lhStatus.has_value() || lhStatus.value() == PointerDetector::INTEGER)) {
             return BinaryOpValueTypes{lhs, rhs};
+        } else if (rhStatus == PointerDetector::POINTER && (!lhStatus.has_value() || lhStatus.value() == PointerDetector::INTEGER)) {
+            return BinaryOpValueTypes{rhs, lhs};
         } else {
             llvm::outs() << "rhStatus: " << rhStatus.value() << "\n";
             llvm::outs() << "lhStatus: ";
@@ -860,15 +941,6 @@ std::optional<PointerDetector::BinaryOpValueTypes> PointerDetector::findBinaryOp
             HANDLE_UNKOWN_VALUE(binaryOp);
         }
     } else return std::nullopt;
-}
-
-llvm::Function* PointerDetector::functionOf(llvm::Value* val) {
-    if (auto inst = llvm::dyn_cast<llvm::Instruction>(val))
-        return inst->getFunction();
-    else if (auto arg = llvm::dyn_cast<llvm::Argument>(val))
-        return arg->getParent();
-    else 
-        return nullptr;
 }
 
 PointerDetectionAnalysis::Result PointerDetectionAnalysis::run(llvm::Module &M, [[maybe_unused]] llvm::ModuleAnalysisManager &MAM) {

@@ -69,3 +69,11 @@ inline llvm::FunctionAnalysisManager& getFAM(llvm::Module& module, llvm::ModuleA
 inline llvm::LoopAnalysisManager& getLAM(llvm::Function& function, llvm::FunctionAnalysisManager& FAM) {
     return FAM.getResult<llvm::LoopAnalysisManagerFunctionProxy>(function).getManager();
 }
+
+inline llvm::Function* functionOf(llvm::Value* val) {
+    if (auto inst = llvm::dyn_cast<llvm::Instruction>(val))
+        return inst->getFunction();
+    else if (auto arg = llvm::dyn_cast<llvm::Argument>(val))
+        return arg->getParent();
+    else return nullptr;
+}
