@@ -19,7 +19,7 @@
 #define dbg_assert(expr) \
     if (!static_cast<bool>(expr)) { \
         llvm::outs().flush();   \
-        llvm::errs().flush();   \
+        llvm::outs().flush();   \
         std::cout.flush();  \
         std::cerr.flush();  \
         std::cerr << __FILE__ << ":" << __LINE__ << ": " << __func__ << ": Assertion `" << #expr << "` failed.\n"; \
@@ -32,6 +32,7 @@
 
 #include <functional>
 #include <llvm/IR/Operator.h>
+#include <optional>
 
 struct run_on_destruct {
     std::function<void()> func;
@@ -76,4 +77,12 @@ inline llvm::Function* functionOf(llvm::Value* val) {
     else if (auto arg = llvm::dyn_cast<llvm::Argument>(val))
         return arg->getParent();
     else return nullptr;
+}
+
+template<typename T>
+inline llvm::raw_ostream& operator << (llvm::raw_ostream& OS, const std::optional<T>& optVal) {
+    if (optVal.has_value())
+        OS << optVal.value();
+    else OS << "<empty optional>";
+    return OS;
 }

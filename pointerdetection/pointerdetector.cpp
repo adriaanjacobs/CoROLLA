@@ -296,6 +296,8 @@ void PointerDetector::mark_pointer_uses(llvm::Value* pointer) {
             auto userStatus = is_unconfirmed_pointer(user);
             if (userStatus.has_value()) {
                 if (userStatus == POINTER) {
+                    if (user->getType()->isVectorTy())
+                        continue; // this is horrible but i just want to compile SPEC at this point
                     ASSERT_ELSE_UNKOWN(module.getDataLayout().getTypeSizeInBits(user->getType()) == 64, user);
                 }
                 mark_value(user, userStatus.value());
@@ -599,7 +601,11 @@ std::optional<PointerDetector::ValueType> PointerDetector::is_unconfirmed_pointe
         if (dataLayout.getTypeSizeInBits(current->getType()) <= 32)
             return INTEGER;
 
-        if (llvm::isa<llvm::PtrToIntOperator>(current) || llvm::isa<llvm::IntToPtrInst>(current)) {
+        assert(dataLayout.getTypeSizeInBits(current->getType()) > 32);
+
+        if (llvm::isa<llvm::ConstantFP>(current) || current->getType()->isFloatingPointTy()) {
+            return INTEGER;
+        } else if (llvm::isa<llvm::PtrToIntOperator>(current) || llvm::isa<llvm::IntToPtrInst>(current)) {
             auto srcTy = llvm::cast<llvm::User>(current)->getOperand(0)->getType();
             auto destTy = current->getType();
             ASSERT_ELSE_UNKOWN(dataLayout.getTypeSizeInBits(srcTy) == 64, current);
@@ -607,11 +613,7 @@ std::optional<PointerDetector::ValueType> PointerDetector::is_unconfirmed_pointe
                 return INTEGER;
             ASSERT_ELSE_UNKOWN(dataLayout.getTypeSizeInBits(destTy) == dataLayout.getTypeSizeInBits(srcTy), current);
             current = llvm::cast<llvm::User>(current)->getOperand(0);
-        } else if (llvm::isa<llvm::ZExtInst>(current) 
-                    || llvm::isa<llvm::SExtInst>(current) 
-                    || llvm::isa<llvm::TruncInst>(current) 
-                    || llvm::isa<llvm::BitCastOperator>(current)
-        ){
+        } else if (llvm::isa<llvm::ZExtInst, llvm::SExtInst, llvm::TruncInst, llvm::BitCastOperator, llvm::SIToFPInst>(current)){
             current = llvm::cast<llvm::User>(current)->getOperand(0);
         } else if (llvm::isa<llvm::ConstantInt>(current) || llvm::isa<llvm::ConstantPointerNull>(current) || llvm::isa<llvm::UndefValue>(current)) {
             // treat constant pointers like integers: they are not (yet) used as pointer
@@ -715,20 +717,24 @@ std::optional<PointerDetector::ValueType> PointerDetector::is_unconfirmed_pointe
                 } break;
                 case llvm::BinaryOperator::Xor: {
                     // only case i know where this would happen is "ptr xor -1" to flip all pointer bits as a way to invert the sign (i think)
+                    auto rOp = binaryOp->getOperand(1);
+                    auto lOp = binaryOp->getOperand(0);
                     assert(rhs.has_value() && lhs.has_value());
-                    if (!(lhs == POINTER && rhs == INTEGER))
-                        HANDLE_UNKOWN_VALUE(binaryOp);
-                    assert(lhs == POINTER && rhs == INTEGER);
-                    ASSERT_ELSE_UNKOWN(binaryOp->getNumUses() == 1, binaryOp);
-                    assert(llvm::cast<llvm::ConstantInt>(binaryOp->getOperand(1))->equalsInt(-1));
-                    return NEGATED_POINTER;
+                    assert(rhs.has_value() && rhs == INTEGER);
+                    assert(llvm::isa<llvm::ConstantInt>(rOp) && llvm::cast<llvm::ConstantInt>(rOp)->equalsInt(-1));
+                    return static_cast<ValueType>(-lhs.value());
                 } break;
                 case llvm::BinaryOperator::LShr:
                 case llvm::BinaryOperator::Shl: {
                     // why would you ever shift a pointer?
-                    if (lhs.has_value() && rhs.has_value() && lhs == INTEGER && rhs == INTEGER) {
-                        return INTEGER;
+                    if (lhs.has_value() && rhs.has_value()) {
+                        if  (lhs == INTEGER && rhs == INTEGER)
+                            return INTEGER;
+                        else if (lhs == POINTER && rhs == INTEGER)
+                            return INTEGER;
                     } else {
+                        llvm::outs() << "lhs: " << lhs << "\n";
+                        llvm::outs() << "rhs" << rhs << "\n";
                         HANDLE_UNKOWN_VALUE(binaryOp);
                     }
                 } break;
@@ -856,6 +862,10 @@ std::optional<PointerDetector::ValueType> PointerDetector::is_unconfirmed_pointe
                         return INTEGER;
                     }
                     assert(false);
+                } break;
+                case llvm::BinaryOperator::URem: {
+                    ASSERT_ELSE_UNKOWN(rhs == INTEGER, binaryOp);
+                    return INTEGER;
                 } break;
                 default: {
                     HANDLE_UNKOWN_VALUE(current);
