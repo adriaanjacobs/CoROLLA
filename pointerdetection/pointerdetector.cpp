@@ -526,33 +526,45 @@ bool PointerDetector::funcIsOnlyDirectlyCalled(llvm::Value* function, llvm::Dens
     if (function->getNumUses() == 0)
         return false;
 
+    bool allGood = true;
+
     for (auto& funcUse : function->uses()) {
-        auto user = funcUse.getUser();
-        assert(function == funcUse.get());
-        if (auto callInst = llvm::dyn_cast<llvm::CallBase>(user)) {
-            if (callInst->getCalledFunction() != function) // the function is passed as argument
+        auto result = [&] () -> bool {
+            auto user = funcUse.getUser();
+            assert(function == funcUse.get());
+            if (auto callInst = llvm::dyn_cast<llvm::CallBase>(user)) {
+                if (callInst->getCalledFunction() != function) // the function is passed as argument
+                    return false;
+                callSites.insert(callInst);
+                return true;
+            } else if (auto storeInst = llvm::dyn_cast<llvm::StoreInst>(user)) {
+                ASSERT_ELSE_UNKOWN(storeInst->getValueOperand() == function, user);
                 return false;
-            callSites.insert(callInst);
-        } else if (auto storeInst = llvm::dyn_cast<llvm::StoreInst>(user)) {
-            ASSERT_ELSE_UNKOWN(storeInst->getValueOperand() == function, user);
-            return false;
-        } else if (llvm::isa<llvm::ConstantAggregate, llvm::GlobalVariable, llvm::PtrToIntOperator>(user)) {
-            return false;
-        } else if (auto phiNode = llvm::dyn_cast<llvm::PHINode>(user)) {
-            if (auto constVal = phiNode->hasConstantValue()) {
-                ASSERT_ELSE_UNKOWN(constVal == user, user);
-                return funcIsOnlyDirectlyCalled(constVal, callSites);
-            } else return false;
-        } else if (auto select = llvm::dyn_cast<llvm::SelectInst>(user)) {
-            ASSERT_ELSE_UNKOWN(select->getCondition() != function, user);
-            if (auto constInt = llvm::dyn_cast<llvm::ConstantInt>(select->getCondition())) {
-                return funcIsOnlyDirectlyCalled(function, callSites);
-            } else return false;
-        } else if (auto bitcast = llvm::dyn_cast<llvm::BitCastOperator>(user)) {
-            return funcIsOnlyDirectlyCalled(bitcast, callSites);
-        } else HANDLE_UNKOWN_VALUE(user);
+            } else if (llvm::isa<llvm::ConstantAggregate, llvm::GlobalVariable, llvm::PtrToIntOperator>(user)) {
+                return false;
+            } else if (auto phiNode = llvm::dyn_cast<llvm::PHINode>(user)) {
+                if (auto constVal = phiNode->hasConstantValue()) {
+                    ASSERT_ELSE_UNKOWN(constVal == user, user);
+                    return funcIsOnlyDirectlyCalled(constVal, callSites);
+                } else return false;
+            } else if (auto select = llvm::dyn_cast<llvm::SelectInst>(user)) {
+                ASSERT_ELSE_UNKOWN(select->getCondition() != function, user);
+                if (auto constInt = llvm::dyn_cast<llvm::ConstantInt>(select->getCondition())) {
+                    return funcIsOnlyDirectlyCalled(function, callSites);
+                } else return false;
+            } else if (auto bitcast = llvm::dyn_cast<llvm::BitCastOperator>(user)) {
+                return funcIsOnlyDirectlyCalled(bitcast, callSites);
+            } else if (auto icmp = llvm::dyn_cast<llvm::ICmpInst>(user)) {
+                assert(!allGood);
+                return true;
+            } else HANDLE_UNKOWN_VALUE(user);
+        } ();
+        
+        if (!result)
+            allGood = false;
     }
-    return true;
+
+    return allGood;
 }
 
 llvm::DenseSet<llvm::Value*> PointerDetector::getIncomingValuesForArgument(llvm::Argument* argument) const {

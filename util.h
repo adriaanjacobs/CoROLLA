@@ -33,6 +33,10 @@
 #include <functional>
 #include <llvm/IR/Operator.h>
 #include <optional>
+#include <llvm/Analysis/MustExecute.h>
+#include <llvm/Analysis/LoopInfo.h>
+#include <llvm/IR/Dominators.h>
+#include <llvm/Analysis/PostDominators.h>
 
 struct run_on_destruct {
     std::function<void()> func;
@@ -79,10 +83,19 @@ inline llvm::Function* functionOf(llvm::Value* val) {
     else return nullptr;
 }
 
+
 template<typename T>
 inline llvm::raw_ostream& operator << (llvm::raw_ostream& OS, const std::optional<T>& optVal) {
     if (optVal.has_value())
         OS << optVal.value();
     else OS << "<empty optional>";
     return OS;
+}
+
+inline llvm::MustBeExecutedContextExplorer getMustBeExecutedContentExplorer(llvm::FunctionAnalysisManager& FAM) {
+    return llvm::MustBeExecutedContextExplorer(true, true, true, 
+        [&] (const llvm::Function& func) -> const llvm::LoopInfo* { return &FAM.getResult<llvm::LoopAnalysis>(const_cast<llvm::Function&>(func)); },
+        [&] (const llvm::Function& func) -> const llvm::DominatorTree* { return &FAM.getResult<llvm::DominatorTreeAnalysis>(const_cast<llvm::Function&>(func)); },
+        [&] (const llvm::Function& func) -> const llvm::PostDominatorTree* { return &FAM.getResult<llvm::PostDominatorTreeAnalysis>(const_cast<llvm::Function&>(func)); }
+    );
 }
