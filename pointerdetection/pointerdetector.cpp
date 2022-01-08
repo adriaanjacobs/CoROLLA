@@ -520,10 +520,17 @@ void PointerDetector::mark_pointer_origins(llvm::Value* pointer) {
     assert(done);
 }
 
-// if this returns false, the callSites do NOT contain the complete set of safe callSites
+// whatever this returns, callSites contains all known callsites
+const PointerDetector::CallSiteInfo& PointerDetector::getCallSiteInfo(llvm::Function* function) const {
+    auto [callSiteInfoIt, inserted] = cachedCallSiteInfo.try_emplace(function);
+    if (inserted) 
+        callSiteInfoIt->getSecond().isComplete = funcIsOnlyDirectlyCalled(function, callSiteInfoIt->getSecond().directCallSites);
+    return callSiteInfoIt->getSecond();
+}
+
 bool PointerDetector::funcIsOnlyDirectlyCalled(llvm::Value* function, llvm::DenseSet<llvm::CallBase*>& callSites) const {
     auto& dataLayout = module.getDataLayout();
-    if (function->getNumUses() == 0)
+    if (function->getNumUses() == 0) 
         return false;
 
     bool allGood = true;
@@ -550,13 +557,18 @@ bool PointerDetector::funcIsOnlyDirectlyCalled(llvm::Value* function, llvm::Dens
             } else if (auto select = llvm::dyn_cast<llvm::SelectInst>(user)) {
                 ASSERT_ELSE_UNKOWN(select->getCondition() != function, user);
                 if (auto constInt = llvm::dyn_cast<llvm::ConstantInt>(select->getCondition())) {
-                    return funcIsOnlyDirectlyCalled(function, callSites);
+                    if (constInt->getValue().isOneValue()) {
+                        return funcIsOnlyDirectlyCalled(select->getTrueValue(), callSites);
+                    } else {
+                        assert(constInt->getValue().isNullValue());
+                        return funcIsOnlyDirectlyCalled(select->getFalseValue(), callSites);
+                    }
                 } else return false;
             } else if (auto bitcast = llvm::dyn_cast<llvm::BitCastOperator>(user)) {
                 return funcIsOnlyDirectlyCalled(bitcast, callSites);
             } else if (auto icmp = llvm::dyn_cast<llvm::ICmpInst>(user)) {
                 assert(!allGood);
-                return true;
+                return false;
             } else HANDLE_UNKOWN_VALUE(user);
         } ();
         
@@ -570,15 +582,13 @@ bool PointerDetector::funcIsOnlyDirectlyCalled(llvm::Value* function, llvm::Dens
 llvm::DenseSet<llvm::Value*> PointerDetector::getIncomingValuesForArgument(llvm::Argument* argument) const {
     auto function = argument->getParent();
 
-    llvm::DenseSet<llvm::CallBase*> callSites;
-    bool alwaysDirectlyCalled = funcIsOnlyDirectlyCalled(function, callSites);
+    auto& callSiteInfo = getCallSiteInfo(function);
 
     llvm::DenseSet<llvm::Value*> incomingValues;
-
     bool isComplete = [&] () -> bool {
-        if (alwaysDirectlyCalled) {
+        if (callSiteInfo.isComplete) {
             // collect incoming values for the argument value, in suitable callsites
-            for (auto callInst : callSites) {
+            for (auto callInst : callSiteInfo.directCallSites) {
                 assert(callInst->getCalledFunction());
                 if (callInst->getCalledFunction() == function && argument->getArgNo() < callInst->arg_size()) {
                     auto incomingVal = callInst->getArgOperand(argument->getArgNo());

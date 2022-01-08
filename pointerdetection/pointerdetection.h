@@ -34,7 +34,12 @@ public:
         };
 
         std::optional<BinaryOpValueTypes> findBinaryOpValueTypes(llvm::BinaryOperator* binaryOp);
-        bool funcIsOnlyDirectlyCalled(llvm::Value* function, llvm::DenseSet<llvm::CallBase*>& callSites) const;
+
+        struct CallSiteInfo {
+            llvm::DenseSet<llvm::CallBase*> directCallSites;
+            bool isComplete;
+        };
+        const CallSiteInfo& getCallSiteInfo(llvm::Function* function) const;
         llvm::DenseSet<llvm::Value*> getIncomingValuesForArgument(llvm::Argument* arg) const;
 
         Detector(llvm::Module &M, llvm::ModuleAnalysisManager &MAM);
@@ -42,6 +47,9 @@ public:
     private:
         llvm::Module& module;
         llvm::ModuleAnalysisManager& MAM;
+
+        mutable llvm::DenseMap<llvm::Function*, CallSiteInfo> cachedCallSiteInfo;
+        bool funcIsOnlyDirectlyCalled(llvm::Value* function, llvm::DenseSet<llvm::CallBase*>& callSites) const;
 
         void identify_start_pointers(llvm::Module& module);
         void mark_pointer_origins(llvm::Value* pointer);
