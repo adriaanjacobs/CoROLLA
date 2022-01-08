@@ -37,6 +37,7 @@
 #include <llvm/Analysis/LoopInfo.h>
 #include <llvm/IR/Dominators.h>
 #include <llvm/Analysis/PostDominators.h>
+#include <llvm/Analysis/ScalarEvolutionExpressions.h>
 
 struct run_on_destruct {
     std::function<void()> func;
@@ -98,4 +99,19 @@ inline llvm::MustBeExecutedContextExplorer getMustBeExecutedContentExplorer(llvm
         [&] (const llvm::Function& func) -> const llvm::DominatorTree* { return &FAM.getResult<llvm::DominatorTreeAnalysis>(const_cast<llvm::Function&>(func)); },
         [&] (const llvm::Function& func) -> const llvm::PostDominatorTree* { return &FAM.getResult<llvm::PostDominatorTreeAnalysis>(const_cast<llvm::Function&>(func)); }
     );
+}
+
+enum DIRECTION { LOWER, UPPER };
+
+template<DIRECTION DIR>
+std::optional<llvm::APInt> getSignedSCEVLimit(const llvm::SCEV* scev, llvm::ScalarEvolution& SE) {
+    auto range = SE.getSignedRange(scev);
+    // heuristic to filter out the uncomputable ones
+    if (scev->getSCEVType() != llvm::scCouldNotCompute) {
+        if (DIR == UPPER && range.getSignedMax().slt(llvm::APInt::getSignedMaxValue(64)))
+            return range.getSignedMax();
+        if (DIR == LOWER && range.getSignedMin().sgt(llvm::APInt::getSignedMinValue(64)))
+            return range.getSignedMin();
+    }
+    return std::nullopt;
 }
