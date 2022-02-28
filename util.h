@@ -115,3 +115,16 @@ std::optional<llvm::APInt> getSignedSCEVLimit(const llvm::SCEV* scev, llvm::Scal
     }
     return std::nullopt;
 }
+
+inline llvm::Value* castToInt64Ty(llvm::Value* val, llvm::Instruction* insertBefore, llvm::StringRef name = "") {
+    llvm::Type* int64Ty = llvm::Type::getInt64Ty(insertBefore->getModule()->getContext());
+
+    if (val->getType()->isPointerTy()) {
+        auto ptrToInt = llvm::PtrToIntInst::Create(llvm::CastInst::PtrToInt, val, int64Ty, name, insertBefore);
+        val = ptrToInt;
+    }
+
+    assert(val->getType()->isIntegerTy());
+    assert(insertBefore->getModule()->getDataLayout().getTypeSizeInBits(val->getType()).getFixedSize() == 64);
+    return val;
+}
