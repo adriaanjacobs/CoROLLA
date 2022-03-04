@@ -316,7 +316,7 @@ void PointerDetector::mark_pointer_origins(llvm::Value* pointer) {
     while (!done) {
         llvm::SmallVector<std::pair<llvm::Value*, ValueType>> toMark;
         auto oldCurrent = current;
-        assert(is_confirmed_pointer(current));
+        ASSERT_ELSE_UNKOWN(is_confirmed_pointer(current), current);
         if (auto gepInst = llvm::dyn_cast<llvm::GetElementPtrInst>(current)) {
             current = gepInst->getPointerOperand();
             toMark.push_back({current, POINTER});
