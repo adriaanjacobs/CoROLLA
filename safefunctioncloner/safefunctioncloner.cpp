@@ -1,14 +1,12 @@
 #include "safefunctioncloner.h"
-#include "Util/BasicTypes.h"
-#include "mpk_instrument/pass.h"
+#include <mpk_instrument/pass.h>
 #include <wrapgeps/wrapgeps.h>
 #include <llvm/Transforms/Utils/Cloning.h>
 
-#include <SVF-FE/LLVMModule.h>
 
 llvm::PreservedAnalyses SafeFunctionClonerPass::run(llvm::Module& module, llvm::ModuleAnalysisManager& MAM) {
     // have to do it
-    SVF::LLVMModuleSet::getLLVMModuleSet()->buildSVFModule(module);
+    // SVF::LLVMModuleSet::getLLVMModuleSet()->buildSVFModule(module);
 
     auto& gepdetector = MAM.getResult<GepDetectionAnalysis>(module);
     auto boundsChecker = MAM.getCachedResult<IsInBoundsAnalysis>(module);

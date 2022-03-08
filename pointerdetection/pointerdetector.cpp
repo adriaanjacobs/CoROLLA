@@ -35,7 +35,7 @@ void PointerDetector::identify_start_pointers(llvm::Module& module) {
                     } else if (auto atomicrmwInst = llvm::dyn_cast<llvm::AtomicRMWInst>(&inst)) {
                         mark_value(atomicrmwInst->getPointerOperand(), POINTER);
                     } else if (auto callInst = llvm::dyn_cast<llvm::CallBase>(&inst)) {
-                        for (uint i = 0; i < callInst->getNumArgOperands(); i++) {
+                        for (uint i = 0; i < callInst->arg_size(); i++) {
                             if (callInst->paramHasAttr(i, llvm::Attribute::Dereferenceable)) {
                                 mark_value(callInst->getArgOperand(i), POINTER);
                             }
@@ -152,7 +152,7 @@ void PointerDetector::mark_actual_vs_formal_args(llvm::Module& module) {
                         auto& funcDesc = funcToDescs[calledFunc];
                         funcDesc.invocations++;
                         size_t declaredArgCount = calledFunc->arg_size();
-                        assert(declaredArgCount <= callInst->getNumArgOperands());
+                        assert(declaredArgCount <= callInst->arg_size());
                         for (uint i = 0; i < declaredArgCount; i++) {
                             auto arg = callInst->getArgOperand(i);
                             if (funcDesc.argDescs[i].isPointer) {
