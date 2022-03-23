@@ -1,9 +1,11 @@
 #pragma once
+#include <cstdint>
 #include <llvm/IR/PassManager.h>
 #include <llvm/Analysis/LoopAnalysisManager.h>
 #include <llvm/IR/Instructions.h>
 #include <array>
 #include <experimental/array>
+#include <string>
 
 #if 0
 #ifndef BOOST_STACKTRACE_USE_BACKTRACE
@@ -127,4 +129,17 @@ inline llvm::Value* castToInt64Ty(llvm::Value* val, llvm::Instruction* insertBef
     assert(val->getType()->isIntegerTy());
     assert(insertBefore->getModule()->getDataLayout().getTypeSizeInBits(val->getType()).getFixedSize() == 64);
     return val;
+}
+
+inline std::string getModuleHash(llvm::Module& module) {
+    size_t bbcount = 0;
+    size_t instcount = 0;
+    for (auto& func : module)
+        for (auto& bb : func) {
+            bbcount++;
+            for (auto& inst : bb)
+                instcount++;
+        }
+    
+    return module.getSourceFileName() + "_" + module.getTargetTriple() + "_" + std::to_string(module.size()) + "_" + std::to_string(bbcount) + "_" + std::to_string(instcount);
 }
