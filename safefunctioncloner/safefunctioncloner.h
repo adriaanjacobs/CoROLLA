@@ -1,3 +1,5 @@
+#pragma once
+
 #include <llvm/Pass.h>
 #include <llvm/IR/PassManager.h>
 
