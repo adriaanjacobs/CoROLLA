@@ -143,3 +143,43 @@ inline std::string getModuleHash(llvm::Module& module) {
     
     return module.getSourceFileName() + "_" + module.getTargetTriple() + "_" + std::to_string(module.size()) + "_" + std::to_string(bbcount) + "_" + std::to_string(instcount);
 }
+
+namespace llvm {
+    template<typename T>
+    struct DenseMapInfo<DenseSet<T*>> {
+        static bool isEqual(const DenseSet<T*>& one, const DenseSet<T*>& other) {
+            return one == other;
+        }
+
+        static DenseSet<T*> getTombstoneKey() {
+            DenseSet<T*> ret;
+            ret.insert((T*)~1);
+            return ret;
+        }
+
+        static DenseSet<T*> getEmptyKey() {
+            DenseSet<T*> ret;
+            ret.insert((T*)-0);
+            return ret;
+        }
+
+        static unsigned getHashValue(const DenseSet<T*>& ptrs) {
+            unsigned accumulator = 0xDEADBEEFU;;
+            for (auto ptr : ptrs) 
+                accumulator = detail::combineHashValue(accumulator, DenseMapInfo<T*>::getHashValue(ptr));
+            return accumulator;
+        }
+    };
+}
+
+namespace std {
+    template<typename T>
+    struct hash<llvm::DenseSet<T>> {
+        size_t operator () (const llvm::DenseSet<T>& set) const {
+            unsigned accumulator = 0xDEADBEEFU;;
+            for (auto& el : set) 
+                accumulator = llvm::detail::combineHashValue(accumulator, std::hash<T>{}(el));
+            return accumulator;
+        }
+    };
+}
