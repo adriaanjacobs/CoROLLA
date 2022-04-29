@@ -184,3 +184,16 @@ namespace std {
         }
     };
 }
+
+#if MY_LLVM_VERSION == 13
+namespace llvm {
+    bool getIndexExpressionsFromGEP(ScalarEvolution &SE,
+                                const GetElementPtrInst *GEP,
+                                SmallVectorImpl<const SCEV *> &Subscripts,
+                                SmallVectorImpl<int> &Sizes) {
+        return SE.getIndexExpressionsFromGEP(GEP, Subscripts, Sizes);
+    }
+}
+#else 
+#include <llvm/Analysis/Delinearization.h>
+#endif
