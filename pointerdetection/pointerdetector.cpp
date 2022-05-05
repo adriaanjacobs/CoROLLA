@@ -520,7 +520,7 @@ void PointerDetector::mark_pointer_origins(llvm::Value* pointer) {
     assert(done);
 }
 
-// whatever this returns, callSites contains all known callsites
+
 const PointerDetector::CallSiteInfo& PointerDetector::getCallSiteInfo(llvm::Function* function) const {
     auto [callSiteInfoIt, inserted] = cachedCallSiteInfo.try_emplace(function);
     if (inserted) 
@@ -528,6 +528,7 @@ const PointerDetector::CallSiteInfo& PointerDetector::getCallSiteInfo(llvm::Func
     return callSiteInfoIt->getSecond();
 }
 
+// whatever this returns, callSites contains all known callsites
 bool PointerDetector::funcIsOnlyDirectlyCalled(llvm::Value* function, llvm::DenseSet<llvm::CallBase*>& callSites) const {
     auto& dataLayout = module.getDataLayout();
     if (function->getNumUses() == 0) 

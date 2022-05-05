@@ -12,6 +12,9 @@ llvm::PreservedAnalyses SafeFunctionClonerPass::run(llvm::Module& module, llvm::
     auto boundsChecker = MAM.getCachedResult<IsInBoundsAnalysis>(module);
     assert(boundsChecker && "GepDetectionAnalysis should have filled the bounds checker!");
 
+    if (boundsChecker->safeCallSites.empty())
+        llvm::outs() << "No safe callsites found. Did the callsite analysis not run perhaps?\n";
+    
     for (auto& argmap : boundsChecker->safeCallSites) {
         auto func = argmap.getFirst()->getParent();
         llvm::ValueToValueMapTy valueMapping;
