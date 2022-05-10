@@ -57,7 +57,7 @@ public:
         void mark_actual_vs_formal_args(llvm::Module& module);
         void mark_value(llvm::Value*, ValueType status);
 
-        static bool isAllocationCall(llvm::Instruction* inst) {
+        static bool isBuiltInAllocationCall(llvm::Instruction* inst) {
             if (AllocWrapperDetector::isStaticAllocationSite(inst))
                 return true;
             else if (auto callInst = llvm::dyn_cast<llvm::CallBase>(inst)) {

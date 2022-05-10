@@ -22,7 +22,7 @@ void PointerDetector::identify_start_pointers(llvm::Module& module) {
     for (auto& func : module) {
         for (auto& bb : func) {
             for (auto& inst : bb) {
-                if (isAllocationCall(&inst))
+                if (isBuiltInAllocationCall(&inst))
                     mark_value(&inst, POINTER);
 
                 if (inst.mayReadOrWriteMemory()) {
