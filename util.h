@@ -187,7 +187,7 @@ namespace std {
 
 #if MY_LLVM_VERSION == 13
 namespace llvm {
-    bool getIndexExpressionsFromGEP(ScalarEvolution &SE,
+    inline bool getIndexExpressionsFromGEP(ScalarEvolution &SE,
                                 const GetElementPtrInst *GEP,
                                 SmallVectorImpl<const SCEV *> &Subscripts,
                                 SmallVectorImpl<int> &Sizes) {
@@ -196,4 +196,11 @@ namespace llvm {
 }
 #else 
 #include <llvm/Analysis/Delinearization.h>
+#endif
+
+#if MY_LLVM_VERSION == 13
+#include <llvm/Passes/PassBuilder.h>
+namespace llvm {
+    using OptimizationLevel = PassBuilder::OptimizationLevel;
+}
 #endif
