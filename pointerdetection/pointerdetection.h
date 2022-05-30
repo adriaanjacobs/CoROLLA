@@ -15,6 +15,25 @@
 //===----------------------------------------------------------------------===//
 /// This class implements an LLVM module analysis pass.
 ///
+class SillyPerlAnalysis : public llvm::AnalysisInfoMixin<SillyPerlAnalysis> {
+public:
+    explicit SillyPerlAnalysis() = default;
+    ~SillyPerlAnalysis() = default;
+    // Provide a unique key, i.e., memory address to be used by the LLVM's pass
+    // infrastructure.
+    static llvm::AnalysisKey Key;
+    friend llvm::AnalysisInfoMixin<SillyPerlAnalysis>;
+
+    // Specify the result type of this analysis pass.
+    using Result = llvm::DenseSet<llvm::Instruction*>;
+
+    // Analyze the bitcode/IR in the given LLVM module.
+    Result run(llvm::Module &M, [[maybe_unused]] llvm::ModuleAnalysisManager &MAM);
+};
+
+//===----------------------------------------------------------------------===//
+/// This class implements an LLVM module analysis pass.
+///
 class PointerDetectionAnalysis : public llvm::AnalysisInfoMixin<PointerDetectionAnalysis> {
 public:
 

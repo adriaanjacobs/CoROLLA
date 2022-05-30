@@ -57,6 +57,7 @@ struct run_on_destruct {
         llvm::outs() << "Is ConstantData: " << (llvm::isa<llvm::ConstantData>(val) ? "yes" : "no") << "\n"; \
         llvm::outs() << "Is instruction: " << (llvm::isa<llvm::Instruction>(val) ? "yes" : "no") << "\n"; \
         llvm::outs() << "Is operator: " << (llvm::isa<llvm::Operator>(val) ? "yes" : "no") << "\n"; \
+        llvm::outs().flush(); \
         assert(!"Unkown instruction!");     \
     } while (false)
 

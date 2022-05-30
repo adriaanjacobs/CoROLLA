@@ -19,6 +19,8 @@ void PointerDetector::identify_start_pointers(llvm::Module& module) {
     for (auto& global : module.globals()) {
         mark_value(&global, POINTER);
     }
+
+    auto& sillyPerls = MAM.getResult<SillyPerlAnalysis>(module);
     for (auto& func : module) {
         for (auto& bb : func) {
             for (auto& inst : bb) {
@@ -29,7 +31,8 @@ void PointerDetector::identify_start_pointers(llvm::Module& module) {
                     auto pointerOperand = llvm::getLoadStorePointerOperand(&inst);
                     if (pointerOperand) {
                         assert(pointerOperand->getType()->isPointerTy());
-                        mark_value(pointerOperand, POINTER);
+                        if (!sillyPerls.contains(&inst))
+                            mark_value(pointerOperand, POINTER);
                     } else if (auto cmpxchgInst = llvm::dyn_cast<llvm::AtomicCmpXchgInst>(&inst)) {
                         mark_value(cmpxchgInst->getPointerOperand(), POINTER);
                     } else if (auto atomicrmwInst = llvm::dyn_cast<llvm::AtomicRMWInst>(&inst)) {
@@ -122,18 +125,23 @@ void PointerDetector::mark_actual_vs_formal_args(llvm::Module& module) {
                 return false;
             
             size_t returns = 0;
+            size_t unreachables = 0;
             for (auto& bb : func) {
                 if (auto retInst = llvm::dyn_cast<llvm::ReturnInst>(bb.getTerminator())) {
                     if (!is_confirmed_pointer(retInst->getReturnValue()))
                         return false;
                     returns++;
                 }
+                unreachables += llvm::isa<llvm::UnreachableInst>(bb.getTerminator());
             }
 
-            if (returns == 0 && dataLayout.getTypeSizeInBits(func.getReturnType()) == 32) {
+            if (returns == 0) {
+                if (dataLayout.getTypeSizeInBits(func.getReturnType()) == 32) // definitely not a pointer anyway
+                    return false;
+                assert(unreachables != 0);
+                // this is an exit function that happens to not return void, treat it as if it did
                 return false;
             }
-            ASSERT_ELSE_UNKOWN(returns > 0, &func);
             return true;
         } ();
 
@@ -535,6 +543,7 @@ bool PointerDetector::funcIsOnlyDirectlyCalled(llvm::Value* function, llvm::Dens
         return false;
 
     bool allGood = true;
+    bool getsComparedWith = false;
 
     for (auto& funcUse : function->uses()) {
         auto result = [&] () -> bool {
@@ -568,14 +577,24 @@ bool PointerDetector::funcIsOnlyDirectlyCalled(llvm::Value* function, llvm::Dens
             } else if (auto bitcast = llvm::dyn_cast<llvm::BitCastOperator>(user)) {
                 return funcIsOnlyDirectlyCalled(bitcast, callSites);
             } else if (auto icmp = llvm::dyn_cast<llvm::ICmpInst>(user)) {
-                assert(!allGood);
-                return false;
+                // the consideration here is that a icmp indicates that the program expects
+                // that some function pointer _may_ refer to function here
+                // Hence, the question becomes how the programmer obtained this function pointer to function?
+                // It may theoretically be a wild guess based on an integer, although that is unlikely
+                // Let's just keep track of an ICmp happening here, so that we can assert later that
+                // the address of the function must have been taken somewhere else. If not, we should
+                // investigate this in more detail
+                getsComparedWith = true;
+                return true;
             } else HANDLE_UNKOWN_VALUE(user);
         } ();
         
         if (!result)
             allGood = false;
     }
+
+    if (getsComparedWith)
+        assert(!allGood);
 
     return allGood;
 }
