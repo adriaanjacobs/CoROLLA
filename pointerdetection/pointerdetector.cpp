@@ -2,6 +2,8 @@
 #include "mpk_instrument/pass.h"
 #include "pointerdetection.h"
 #include "wrapgeps/wrapgeps.h"
+#include "llvm/IR/Constants.h"
+#include "llvm/IR/Instructions.h"
 
 #include <bit>
 #include <bitset>
@@ -81,6 +83,7 @@ llvm::Value* PointerDetector::strip_pointer_casts(llvm::Value *pointer) {
                 case llvm::Instruction::CastOps::IntToPtr:
                 case llvm::Instruction::CastOps::PtrToInt:
                     assert(castInst->isNoopCast(dataLayout));
+                [[fallthrough]];
                 case llvm::Instruction::CastOps::BitCast: {
                     pointer = castInst->getOperand(0);
                 } break;
@@ -346,6 +349,10 @@ void PointerDetector::mark_pointer_origins(llvm::Value* pointer) {
         } else if (auto ptrtointOp = llvm::dyn_cast<llvm::PtrToIntOperator>(current)) {
             current = ptrtointOp->getPointerOperand();
             toMark.push_back({current, POINTER});
+        } else if (auto freeze = llvm::dyn_cast<llvm::FreezeInst>(current)) {
+            assert((!llvm::isa<llvm::UndefValue, llvm::PoisonValue>(freeze->getOperand(0))));
+            current = freeze->getOperand(0);
+            toMark.push_back({current, POINTER});
         } else if (auto loadInst = llvm::dyn_cast<llvm::LoadInst>(current)) {
             done = true;
             break;
@@ -543,7 +550,7 @@ bool PointerDetector::funcIsOnlyDirectlyCalled(llvm::Value* function, llvm::Dens
         return false;
 
     bool allGood = true;
-    bool getsComparedWith = false;
+    llvm::DenseSet<llvm::ICmpInst*> weirdIcmps;
 
     for (auto& funcUse : function->uses()) {
         auto result = [&] () -> bool {
@@ -560,20 +567,10 @@ bool PointerDetector::funcIsOnlyDirectlyCalled(llvm::Value* function, llvm::Dens
             } else if (llvm::isa<llvm::ConstantAggregate, llvm::GlobalVariable, llvm::PtrToIntOperator>(user)) {
                 return false;
             } else if (auto phiNode = llvm::dyn_cast<llvm::PHINode>(user)) {
-                if (auto constVal = phiNode->hasConstantValue()) {
-                    ASSERT_ELSE_UNKOWN(constVal == user, user);
-                    return funcIsOnlyDirectlyCalled(constVal, callSites);
-                } else return false;
+                return false;
             } else if (auto select = llvm::dyn_cast<llvm::SelectInst>(user)) {
                 ASSERT_ELSE_UNKOWN(select->getCondition() != function, user);
-                if (auto constInt = llvm::dyn_cast<llvm::ConstantInt>(select->getCondition())) {
-                    if (constInt->getValue().isOneValue()) {
-                        return funcIsOnlyDirectlyCalled(select->getTrueValue(), callSites);
-                    } else {
-                        assert(constInt->getValue().isNullValue());
-                        return funcIsOnlyDirectlyCalled(select->getFalseValue(), callSites);
-                    }
-                } else return false;
+                return false;
             } else if (auto bitcast = llvm::dyn_cast<llvm::BitCastOperator>(user)) {
                 return funcIsOnlyDirectlyCalled(bitcast, callSites);
             } else if (auto icmp = llvm::dyn_cast<llvm::ICmpInst>(user)) {
@@ -584,7 +581,7 @@ bool PointerDetector::funcIsOnlyDirectlyCalled(llvm::Value* function, llvm::Dens
                 // Let's just keep track of an ICmp happening here, so that we can assert later that
                 // the address of the function must have been taken somewhere else. If not, we should
                 // investigate this in more detail
-                getsComparedWith = true;
+                weirdIcmps.insert(icmp);
                 return true;
             } else HANDLE_UNKOWN_VALUE(user);
         } ();
@@ -593,8 +590,17 @@ bool PointerDetector::funcIsOnlyDirectlyCalled(llvm::Value* function, llvm::Dens
             allGood = false;
     }
 
-    if (getsComparedWith)
+    if (!weirdIcmps.empty()) {
+        if (!allGood) {
+            llvm::outs() << "Waw! Weird ones:\n";
+            for (auto icmp : weirdIcmps)
+                llvm::outs() << "\t" << *icmp << "\n";
+            llvm::outs() << "\n";
+        }
+        llvm::outs().flush();
         assert(!allGood);
+    }
+       
 
     return allGood;
 }
@@ -622,6 +628,196 @@ llvm::DenseSet<llvm::Value*> PointerDetector::getIncomingValuesForArgument(llvm:
     if (!isComplete)
         incomingValues.clear();
     return incomingValues;
+}
+
+template<typename T>
+std::optional<PointerDetector::ValueType> PointerDetector::handle_unconfirmed_binaryOp(T* binaryOp) const {
+    auto lhs = is_unconfirmed_pointer(binaryOp->getOperand(0));
+    auto rhs = is_unconfirmed_pointer(binaryOp->getOperand(1));
+
+    if (!lhs.has_value() || !rhs.has_value())
+        return std::nullopt;
+
+    switch (binaryOp->getOpcode()) {
+        case llvm::BinaryOperator::SDiv: {
+            // Considering everything invalid except normal integer division
+            // ptr / int = INVALID
+            // ptr / ptr = INVALID
+            // ptr / neg_ptr = INVALID
+            // int / int = int
+            // int / ptr = INVALID
+            // int / neg_ptr = INVALID
+            // neg_ptr / int = INVALID
+            // neg_ptr / ptr = INVALID
+            // neg_ptr / neg_ptr = INVALID
+            if (lhs.has_value() && rhs.has_value() && lhs == INTEGER && rhs == INTEGER)
+                return INTEGER;
+            else HANDLE_UNKOWN_VALUE(binaryOp);
+
+        } break;
+        case llvm::BinaryOperator::Xor: {
+            // only case i know where this would happen is "ptr xor -1" to flip all pointer bits as a way to invert the sign (i think)
+            auto rOp = binaryOp->getOperand(1);
+            auto lOp = binaryOp->getOperand(0);
+            assert(rhs.has_value() && lhs.has_value());
+            assert(rhs.has_value() && rhs == INTEGER);
+            assert(llvm::isa<llvm::ConstantInt>(rOp) && llvm::cast<llvm::ConstantInt>(rOp)->equalsInt(-1));
+            return static_cast<ValueType>(-lhs.value());
+        } break;
+        case llvm::BinaryOperator::LShr:
+        case llvm::BinaryOperator::Shl: {
+            // why would you ever shift a pointer?
+            if (lhs.has_value() && rhs.has_value()) {
+                if  (lhs == INTEGER && rhs == INTEGER)
+                    return INTEGER;
+                else if (lhs == POINTER && rhs == INTEGER)
+                    return INTEGER;
+                else HANDLE_UNKOWN_VALUE(binaryOp);
+            } else {
+                llvm::outs() << "lhs: " << lhs << "\n";
+                llvm::outs() << "rhs" << rhs << "\n";
+                HANDLE_UNKOWN_VALUE(binaryOp);
+            }
+        } break;
+        case llvm::BinaryOperator::Or: {
+            // I should treat ors like adds, rather than ands, since they only set bits
+            // ptr | int = ptr
+            // ptr | ptr = INVALID
+            // ptr | neg_ptr = INVALID
+            // int | int = int
+            // int | ptr = ptr
+            // int | neg_ptr = INVALID
+            // neg_ptr | int = INVALID
+            // neg_ptr | ptr = INVALID
+            // neg_ptr | neg_ptr = INVALID
+            if (lhs.has_value() && rhs.has_value()) {
+                assert(lhs != NEGATED_POINTER && rhs.value() != NEGATED_POINTER);
+
+                if ((lhs == POINTER && rhs == INTEGER) || (rhs == POINTER && lhs == INTEGER)) {
+                    return POINTER;
+                } else {
+                    assert(lhs == INTEGER && rhs == INTEGER);
+                    return INTEGER;
+                }
+            } else HANDLE_UNKOWN_VALUE(binaryOp);
+            
+        } break;
+        case llvm::BinaryOperator::And: {
+            // ptr & int = ptr or int (depends on int: UINT64_MAX << 8 gives ptr, UINT64_MAX >> 48 gives int)
+            // ptr & ptr = INVALID
+            // ptr & neg_ptr = INVALID
+            // int & int = int
+            // int & ptr = ptr or int
+            // int & neg_ptr = INVALID
+            // neg_ptr & int = INVALID
+            // neg_ptr & ptr = INVALID
+            // neg_ptr & neg_ptr = INVALID
+            if (lhs.has_value() && rhs.has_value()) {
+                assert(lhs != NEGATED_POINTER && rhs.value() != NEGATED_POINTER);
+
+                if ((lhs == POINTER && rhs == INTEGER) || (rhs == POINTER && lhs == INTEGER)) {
+                    auto mask = binaryOp->getOperand(rhs == INTEGER);
+                    // TODO:: Instead of testing for constantInt, I could do some constant folding or knownbits analysis
+                    // also, a common case is to have the page size and stuff, which is technically not a compile time
+                    // constant, but maybe i could identify those functions etc idk
+                    if (auto constantMask = llvm::dyn_cast<llvm::ConstantInt>(mask)) {
+                        uint64_t maskVal = constantMask->getZExtValue();
+                        std::bitset<64> bitset{maskVal};
+
+                        if (bitset.count() >= 32) {
+                            if (std::countl_one(maskVal) >= 32)
+                                return POINTER;
+                            else if (std::__countl_zero(maskVal) >= 32)
+                                return INTEGER;
+                            else HANDLE_UNKOWN_VALUE(binaryOp);
+                        } else return INTEGER;
+                    } else return std::nullopt; 
+                } else {
+                    assert(lhs == INTEGER && rhs == INTEGER);
+                    return INTEGER;
+                }
+            } else HANDLE_UNKOWN_VALUE(binaryOp);
+        } break;
+        case llvm::BinaryOperator::Add: {
+            // ptr + int = ptr
+            // ptr + ptr = INVALID (2)
+            // ptr + neg_ptr = ptr - ptr = int
+            // int + int = int
+            // int + ptr = ptr
+            // int + neg_ptr = int - ptr = neg_ptr
+            // neg_ptr + int = neg_ptr
+            // neg_ptr + ptr = ptr - ptr = int
+            // neg_ptr + neg_ptr = - (ptr + ptr) = INVALID (-2)
+            if (lhs.has_value() && rhs.has_value()) {
+                int result = lhs.value() + rhs.value();
+                if (result == 2) {
+                    // I know this is disgusting, but perlbench does it alright
+                    // summming two pointers should not return in a pointer
+                    // assume they're doing some kind of combined hash (pray)
+                    return ValueType::INTEGER;
+                }
+                if (!(abs(result) <= 1)) {
+                    llvm::outs() << "lhs: " << lhs.value() << ", rhs: " << rhs.value() << "\n";
+                    HANDLE_UNKOWN_VALUE(binaryOp);
+                }
+                assert(abs(result) <= 1);
+                return static_cast<ValueType>(result);
+            } else HANDLE_UNKOWN_VALUE(binaryOp);
+        } break;
+        case llvm::BinaryOperator::Sub: {
+            // ptr - int = ptr 
+            // ptr - ptr = int
+            // ptr - neg_ptr = ptr + ptr = INVALID (2)
+            // int - int = int
+            // int - ptr = neg_ptr
+            // int - neg_ptr = ptr
+            // neg_ptr - int = neg_ptr
+            // neg_ptr - ptr = neg_ptr + neg_ptr = -(ptr + ptr) = INVALID (-2)
+            // neg_ptr - neg_ptr = neg_ptr + ptr = ptr - ptr = int
+
+            if (lhs.has_value() && rhs.has_value()) {
+                int result = lhs.value() - rhs.value();
+                assert(abs(result) <= 1);
+                return static_cast<ValueType>(result);
+            } else HANDLE_UNKOWN_VALUE(binaryOp);
+        } break;
+        case llvm::BinaryOperator::Mul: {
+            // ptr * int = ptr 
+            // ptr * ptr = INVALID
+            // ptr * neg_ptr = INVALID
+            // int * int = int
+            // int * ptr = ptr
+            // int * neg_ptr = neg_ptr
+            // neg_ptr * int = neg_ptr
+            // neg_ptr * ptr = INVALID
+            // neg_ptr * neg_ptr = INVALID
+
+            assert(lhs.has_value() && rhs.has_value());
+
+            if (lhs == POINTER || lhs == NEGATED_POINTER) {
+                ASSERT_ELSE_UNKOWN(rhs == INTEGER, binaryOp);
+                auto rh = llvm::dyn_cast<llvm::ConstantInt>(binaryOp->getOperand(1));
+                ASSERT_ELSE_UNKOWN(rh && rh->getValue().abs() == 1, binaryOp);
+                return lhs;
+            } else if (rhs == POINTER || rhs == NEGATED_POINTER) {
+                ASSERT_ELSE_UNKOWN(lhs == INTEGER, binaryOp);
+                auto lh = llvm::dyn_cast<llvm::ConstantInt>(binaryOp->getOperand(0));
+                ASSERT_ELSE_UNKOWN(lh && lh->getValue().abs() == 1, binaryOp);
+                return POINTER;
+            } else {
+                ASSERT_ELSE_UNKOWN(lhs == INTEGER && rhs == INTEGER, binaryOp);
+                return INTEGER;
+            }
+            assert(false);
+        } break;
+        case llvm::BinaryOperator::URem: {
+            ASSERT_ELSE_UNKOWN(rhs == INTEGER, binaryOp);
+            return INTEGER;
+        } break;
+        default: {
+            HANDLE_UNKOWN_VALUE(binaryOp);
+        }
+    }
 }
 
 std::optional<PointerDetector::ValueType> PointerDetector::is_unconfirmed_pointer(llvm::Value* current) const {
@@ -732,193 +928,18 @@ std::optional<PointerDetector::ValueType> PointerDetector::is_unconfirmed_pointe
             return std::nullopt;
         } else if (llvm::isa<llvm::InsertElementInst, llvm::InsertValueInst>(current)) {
             return std::nullopt; // these are aggregates/vectors, not pointers.
-            // If we want to continue tracking these, we have to represent pointers differently (as val + idx)
+            // If we want to continue tracking these, we have to represent pointers differently (as val + idx) (or as Use)
         } else if (auto binaryOp = llvm::dyn_cast<llvm::BinaryOperator>(current)) {
-            auto lhs = is_unconfirmed_pointer(binaryOp->getOperand(0));
-            auto rhs = is_unconfirmed_pointer(binaryOp->getOperand(1));
-
-            if (!lhs.has_value() || !rhs.has_value())
-                return std::nullopt;
-
-            switch (binaryOp->getOpcode()) {
-                case llvm::BinaryOperator::SDiv: {
-                    // Considering everything invalid except normal integer division
-                    // ptr / int = INVALID
-                    // ptr / ptr = INVALID
-                    // ptr / neg_ptr = INVALID
-                    // int / int = int
-                    // int / ptr = INVALID
-                    // int / neg_ptr = INVALID
-                    // neg_ptr / int = INVALID
-                    // neg_ptr / ptr = INVALID
-                    // neg_ptr / neg_ptr = INVALID
-                    if (lhs.has_value() && rhs.has_value() && lhs == INTEGER && rhs == INTEGER)
-                        return INTEGER;
-                    else HANDLE_UNKOWN_VALUE(binaryOp);
-
-                } break;
-                case llvm::BinaryOperator::Xor: {
-                    // only case i know where this would happen is "ptr xor -1" to flip all pointer bits as a way to invert the sign (i think)
-                    auto rOp = binaryOp->getOperand(1);
-                    auto lOp = binaryOp->getOperand(0);
-                    assert(rhs.has_value() && lhs.has_value());
-                    assert(rhs.has_value() && rhs == INTEGER);
-                    assert(llvm::isa<llvm::ConstantInt>(rOp) && llvm::cast<llvm::ConstantInt>(rOp)->equalsInt(-1));
-                    return static_cast<ValueType>(-lhs.value());
-                } break;
-                case llvm::BinaryOperator::LShr:
-                case llvm::BinaryOperator::Shl: {
-                    // why would you ever shift a pointer?
-                    if (lhs.has_value() && rhs.has_value()) {
-                        if  (lhs == INTEGER && rhs == INTEGER)
-                            return INTEGER;
-                        else if (lhs == POINTER && rhs == INTEGER)
-                            return INTEGER;
-                    } else {
-                        llvm::outs() << "lhs: " << lhs << "\n";
-                        llvm::outs() << "rhs" << rhs << "\n";
-                        HANDLE_UNKOWN_VALUE(binaryOp);
-                    }
-                } break;
-                case llvm::BinaryOperator::Or: {
-                    // I should treat ors like adds, rather than ands, since they only set bits
-                    // ptr | int = ptr
-                    // ptr | ptr = INVALID
-                    // ptr | neg_ptr = INVALID
-                    // int | int = int
-                    // int | ptr = ptr
-                    // int | neg_ptr = INVALID
-                    // neg_ptr | int = INVALID
-                    // neg_ptr | ptr = INVALID
-                    // neg_ptr | neg_ptr = INVALID
-                    if (lhs.has_value() && rhs.has_value()) {
-                        assert(lhs != NEGATED_POINTER && rhs.value() != NEGATED_POINTER);
-
-                        if ((lhs == POINTER && rhs == INTEGER) || (rhs == POINTER && lhs == INTEGER)) {
-                            return POINTER;
-                        } else {
-                            assert(lhs == INTEGER && rhs == INTEGER);
-                            return INTEGER;
-                        }
-                    } else HANDLE_UNKOWN_VALUE(binaryOp);
-                    
-                } break;
-                case llvm::BinaryOperator::And: {
-                    // ptr & int = ptr or int (depends on int: UINT64_MAX << 8 gives ptr, UINT64_MAX >> 48 gives int)
-                    // ptr & ptr = INVALID
-                    // ptr & neg_ptr = INVALID
-                    // int & int = int
-                    // int & ptr = ptr or int
-                    // int & neg_ptr = INVALID
-                    // neg_ptr & int = INVALID
-                    // neg_ptr & ptr = INVALID
-                    // neg_ptr & neg_ptr = INVALID
-                    if (lhs.has_value() && rhs.has_value()) {
-                        assert(lhs != NEGATED_POINTER && rhs.value() != NEGATED_POINTER);
-
-                        if ((lhs == POINTER && rhs == INTEGER) || (rhs == POINTER && lhs == INTEGER)) {
-                            auto mask = binaryOp->getOperand(rhs == INTEGER);
-                            // TODO:: Instead of testing for constantInt, I could do some constant folding or knownbits analysis
-                            // also, a common case is to have the page size and stuff, which is technically not a compile time
-                            // constant, but maybe i could identify those functions etc idk
-                            if (auto constantMask = llvm::dyn_cast<llvm::ConstantInt>(mask)) {
-                                uint64_t maskVal = constantMask->getZExtValue();
-                                std::bitset<64> bitset{maskVal};
-
-                                if (bitset.count() >= 32) {
-                                    if (std::countl_one(maskVal) >= 32)
-                                        return POINTER;
-                                    else if (std::__countl_zero(maskVal) >= 32)
-                                        return INTEGER;
-                                    else HANDLE_UNKOWN_VALUE(binaryOp);
-                                } else return INTEGER;
-                            } else return std::nullopt; 
-                        } else {
-                            assert(lhs == INTEGER && rhs == INTEGER);
-                            return INTEGER;
-                        }
-                    } else HANDLE_UNKOWN_VALUE(binaryOp);
-                } break;
-                case llvm::BinaryOperator::Add: {
-                    // ptr + int = ptr
-                    // ptr + ptr = INVALID (2)
-                    // ptr + neg_ptr = ptr - ptr = int
-                    // int + int = int
-                    // int + ptr = ptr
-                    // int + neg_ptr = int - ptr = neg_ptr
-                    // neg_ptr + int = neg_ptr
-                    // neg_ptr + ptr = ptr - ptr = int
-                    // neg_ptr + neg_ptr = - (ptr + ptr) = INVALID (-2)
-                    if (lhs.has_value() && rhs.has_value()) {
-                        int result = lhs.value() + rhs.value();
-                        if (!(abs(result) <= 1)) {
-                            llvm::outs() << "lhs: " << lhs.value() << ", rhs: " << rhs.value() << "\n";
-                            HANDLE_UNKOWN_VALUE(binaryOp);
-                        }
-                        assert(abs(result) <= 1);
-                        return static_cast<ValueType>(result);
-                    } else HANDLE_UNKOWN_VALUE(binaryOp);
-                } break;
-                case llvm::BinaryOperator::Sub: {
-                    // ptr - int = ptr 
-                    // ptr - ptr = int
-                    // ptr - neg_ptr = ptr + ptr = INVALID (2)
-                    // int - int = int
-                    // int - ptr = neg_ptr
-                    // int - neg_ptr = ptr
-                    // neg_ptr - int = neg_ptr
-                    // neg_ptr - ptr = neg_ptr + neg_ptr = -(ptr + ptr) = INVALID (-2)
-                    // neg_ptr - neg_ptr = neg_ptr + ptr = ptr - ptr = int
-
-                    if (lhs.has_value() && rhs.has_value()) {
-                        int result = lhs.value() - rhs.value();
-                        assert(abs(result) <= 1);
-                        return static_cast<ValueType>(result);
-                    } else HANDLE_UNKOWN_VALUE(binaryOp);
-                } break;
-                case llvm::BinaryOperator::Mul: {
-                    // ptr * int = ptr 
-                    // ptr * ptr = INVALID
-                    // ptr * neg_ptr = INVALID
-                    // int * int = int
-                    // int * ptr = ptr
-                    // int * neg_ptr = neg_ptr
-                    // neg_ptr * int = neg_ptr
-                    // neg_ptr * ptr = INVALID
-                    // neg_ptr * neg_ptr = INVALID
-
-                    assert(lhs.has_value() && rhs.has_value());
-
-                    if (lhs == POINTER || lhs == NEGATED_POINTER) {
-                        ASSERT_ELSE_UNKOWN(rhs == INTEGER, binaryOp);
-                        auto rh = llvm::dyn_cast<llvm::ConstantInt>(binaryOp->getOperand(1));
-                        ASSERT_ELSE_UNKOWN(rh && rh->getValue().abs() == 1, binaryOp);
-                        return lhs;
-                    } else if (rhs == POINTER || rhs == NEGATED_POINTER) {
-                        ASSERT_ELSE_UNKOWN(lhs == INTEGER, binaryOp);
-                        auto lh = llvm::dyn_cast<llvm::ConstantInt>(binaryOp->getOperand(0));
-                        ASSERT_ELSE_UNKOWN(lh && lh->getValue().abs() == 1, binaryOp);
-                        return POINTER;
-                    } else {
-                        ASSERT_ELSE_UNKOWN(lhs == INTEGER && rhs == INTEGER, binaryOp);
-                        return INTEGER;
-                    }
-                    assert(false);
-                } break;
-                case llvm::BinaryOperator::URem: {
-                    ASSERT_ELSE_UNKOWN(rhs == INTEGER, binaryOp);
-                    return INTEGER;
-                } break;
-                default: {
-                    HANDLE_UNKOWN_VALUE(current);
-                }
-            }
+            return handle_unconfirmed_binaryOp(binaryOp);
         } else if (auto constantExpr = llvm::dyn_cast<llvm::ConstantExpr>(current)) {
             switch (constantExpr->getOpcode()) {
                 case llvm::Instruction::IntToPtr: {
                     assert(dataLayout.getTypeSizeInBits(current->getType()) == dataLayout.getTypeSizeInBits(constantExpr->getOperand(0)->getType()));
                     assert(dataLayout.getTypeSizeInBits(current->getType()) == 64);
                     current = constantExpr->getOperand(0);
+                } break;
+                case llvm::Instruction::Sub: {
+                    return handle_unconfirmed_binaryOp(constantExpr);
                 } break;
                 default: {
                     llvm::outs() << "Opcode: " << constantExpr->getOpcodeName() << "\n";
