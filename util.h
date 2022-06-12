@@ -105,10 +105,11 @@ inline llvm::MustBeExecutedContextExplorer getMustBeExecutedContentExplorer(llvm
     );
 }
 
-enum DIRECTION { LOWER, UPPER };
+enum struct DIRECTION { LOWER, UPPER };
 
 template<DIRECTION DIR>
 std::optional<llvm::APInt> getSignedSCEVLimit(const llvm::SCEV* scev, llvm::ScalarEvolution& SE) {
+    using enum DIRECTION;
     auto range = SE.getSignedRange(scev);
     // heuristic to filter out the uncomputable ones
     if (scev->getSCEVType() != llvm::scCouldNotCompute) {
