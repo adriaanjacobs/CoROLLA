@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <llvm-15/llvm/Support/HashBuilder.h>
 #include <llvm/IR/PassManager.h>
 #include <llvm/Analysis/LoopAnalysisManager.h>
 #include <llvm/IR/Instructions.h>
@@ -137,14 +138,17 @@ inline llvm::Value* castToInt64Ty(llvm::Value* val, llvm::Instruction* insertBef
 inline std::string getModuleHash(llvm::Module& module) {
     size_t bbcount = 0;
     size_t instcount = 0;
+    uint64_t hash_value = 0xDEADBEEF;
     for (auto& func : module)
         for (auto& bb : func) {
             bbcount++;
-            for (auto& inst : bb)
+            for (auto& inst : bb) {
                 instcount++;
+                hash_value ^= inst.getOpcode();
+            }
         }
     
-    return module.getSourceFileName() + "_" + module.getTargetTriple() + "_" + std::to_string(module.size()) + "_" + std::to_string(bbcount) + "_" + std::to_string(instcount);
+    return module.getSourceFileName() + "_" + module.getTargetTriple() + "_" + std::to_string(module.size()) + "_" + std::to_string(bbcount) + "_" + std::to_string(instcount) + "_" + std::to_string(hash_value);
 }
 
 namespace llvm {
