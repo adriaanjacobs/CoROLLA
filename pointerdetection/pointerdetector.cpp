@@ -55,6 +55,10 @@ void PointerDetector::identify_start_pointers(llvm::Module& module) {
         }
     }
 
+    for (auto& global : module.globals()) {
+        mark_value(&global, POINTER);
+    }
+
     llvm::outs() << pointers.size() << " start pointers identified.\n";
 }
 
@@ -519,8 +523,7 @@ void PointerDetector::mark_pointer_origins(llvm::Value* pointer) {
         ASSERT_ELSE_UNKOWN(done || oldCurrent != current, current);
 
         assert(!llvm::isa<llvm::Argument>(oldCurrent));
-        auto func = functionOf(oldCurrent);
-        if (func) {
+        if (auto func = functionOf(oldCurrent)) {
             auto oldInst = llvm::cast<llvm::Instruction>(oldCurrent);
             auto& postDomTree = FAM.getResult<llvm::PostDominatorTreeAnalysis>(*func);
             auto oldNode = postDomTree.getNode(oldInst->getParent());
@@ -853,7 +856,10 @@ std::optional<PointerDetector::ValueType> PointerDetector::is_unconfirmed_pointe
             current = llvm::cast<llvm::User>(current)->getOperand(0);
         } else if (llvm::isa<llvm::ZExtInst, llvm::SExtInst, llvm::TruncInst, llvm::BitCastOperator, llvm::SIToFPInst>(current)){
             current = llvm::cast<llvm::User>(current)->getOperand(0);
-        } else if (llvm::isa<llvm::ConstantInt>(current) || llvm::isa<llvm::ConstantPointerNull>(current) || llvm::isa<llvm::UndefValue>(current)) {
+        } else if (auto freeze = llvm::dyn_cast<llvm::FreezeInst>(current)) {
+            ASSERT_ELSE_UNKOWN((!llvm::isa<llvm::UndefValue, llvm::PoisonValue>(freeze->getOperand(0))), freeze);
+            current = freeze->getOperand(0);
+        } else if (llvm::isa<llvm::ConstantInt, llvm::ConstantPointerNull,llvm::UndefValue>(current)) {
             // treat constant pointers like integers: they are not (yet) used as pointer
             // they may be promoted later based on context information
             return INTEGER;
