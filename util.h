@@ -98,7 +98,7 @@ inline llvm::raw_ostream& operator << (llvm::raw_ostream& OS, const std::optiona
     return OS;
 }
 
-inline llvm::MustBeExecutedContextExplorer getMustBeExecutedContentExplorer(llvm::FunctionAnalysisManager& FAM, bool forward, bool backward) {
+inline llvm::MustBeExecutedContextExplorer getMustBeExecutedContextExplorer(llvm::FunctionAnalysisManager& FAM, bool forward, bool backward) {
     return llvm::MustBeExecutedContextExplorer(true, forward, backward, 
         [&] (const llvm::Function& func) -> const llvm::LoopInfo* { return &FAM.getResult<llvm::LoopAnalysis>(const_cast<llvm::Function&>(func)); },
         [&] (const llvm::Function& func) -> const llvm::DominatorTree* { return &FAM.getResult<llvm::DominatorTreeAnalysis>(const_cast<llvm::Function&>(func)); },
