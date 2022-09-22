@@ -52,6 +52,9 @@
 #include <llvm/Transforms/Scalar/LoopPassManager.h>
 #include <llvm/Transforms/InstCombine/InstCombine.h>
 #include <llvm/Transforms/IPO/ArgumentPromotion.h>
+#include <llvm/Transforms/Utils/FixIrreducible.h>
+#include <llvm/Transforms/Utils/UnifyLoopExits.h>
+
 #include <llvm/IR/Verifier.h>
 
 #include <svfpass/BreakConstantExpr.h>
@@ -224,7 +227,7 @@ public:
         MPM.addPass(llvm::AlwaysInlinerPass{});
         // removing the dead (uncalled) functions
         MPM.addPass(llvm::createModuleToFunctionPassAdaptor(llvm::DCEPass{}));
-        // running mem2reg after the transformation
+        // running mem2reg after the transformation has proven to have amazing effects on my attestation instrumentation
         MPM.addPass(llvm::createModuleToFunctionPassAdaptor(llvm::PromotePass{}));
         MPM.addPass(llvm::VerifierPass{});
     }
