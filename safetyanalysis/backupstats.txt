@@ -1,0 +1,87 @@
+BENCHMARK.LL
+Out of 11520 pointer operands, we proved that 7024 operands are safe (6.097222e+01%)
+Our first analysis pruned 8513 out of 13508 memaccesses (6.302191e+01%)
+In 4995 accesses, we were able to find 477 redundant ones (9.549549e+00%).
+In total, we pruned 8990 out of 13508 memaccesses (6.655315e+01%)
+25252 pointers received from PointerDetectionAnalysis
+I identified 19197 pointer arithmetic instructions, I missed at least 0 ones due to imprecision. 
+I identified 16974 out of 18120 gep operands (9.367550e+01%).
+879 out of 19197 modified pointers (4.578840e+00%) need to be wrapped
+We pruned 243 instrumentation points out of 5397 (4.502501e+00%).
+We need 9441 checks in total, we needed 9444 before our instrumentation point optimization
+For 9441 checks, we emit 2602 sizeExp calls
+Bail stats for isInBoundsAnalysis: 
+        #1: function argument. 7097 occurrences.
+        #2: load. 963 occurrences.
+        #3: getelementptr. 940 occurrences.
+        #4: allocation site. 563 occurrences.
+        #5: phi. 282 occurrences.
+        #6: call. 55 occurrences.
+        #7: select. 3 occurrences.
+
+INTRAPROCEDURAL BENCHMARK.LL
+Out of 11520 pointer operands, we proved that 6538 operands are safe (5.675347e+01%)
+Our first analysis pruned 7863 out of 13508 memaccesses (5.820995e+01%)
+In 5645 accesses, we were able to find 887 redundant ones (1.571302e+01%).
+In total, we pruned 8750 out of 13508 memaccesses (6.477643e+01%)
+25252 pointers received from PointerDetectionAnalysis
+I identified 19197 pointer arithmetic instructions, I missed at least 0 ones due to imprecision. 
+I identified 16974 out of 18120 gep operands (9.367550e+01%).
+1034 out of 19197 modified pointers (5.386258e+00%) need to be wrapped
+We pruned 30 instrumentation points out of 5792 (5.179558e-01%).
+We pruned 183 out of 5748 arena checks (3.183716e+00%).
+5579 out of 5678 strippedOps still require an arenacheck (9.825643e+01%)
+In total, this resulted in 0 points out of 5762 (0.000000e+00%) being pruned.
+We need 10319 checks in total, we needed 10322 before our instrumentation point optimization
+There are 252 points out of 5762 with overly conservative assertions.
+For 10319 checks, we emit 3018 sizeExp calls
+Bail stats for isInBoundsAnalysis: 
+        #1: function argument. 8159 occurrences.
+        #2: load. 1002 occurrences.
+        #3: getelementptr. 902 occurrences.
+        #4: allocation site. 563 occurrences.
+        #5: phi. 285 occurrences.
+        #6: call. 55 occurrences.
+        #7: select. 3 occurrences.
+Analysis finished. Now instrumenting the program.
+Inserted helper functions.
+Collected sizeExpInsertionPoints for 1766 real bases.
+Created 3018 sizeExp calls.
+Instrumentation finished, inserted 10319 checks (numBounds: 4757, numArena: 5562). 
+4546 out of 5748 assertions can be replaced by cmov NULLs.
+
+NGINX.LL
+Out of 23147 pointer operands, we proved that 3267 operands are safe (1.411414e+01%)
+Our first analysis pruned 5026 out of 32172 memaccesses (1.562228e+01%)
+In 27146 accesses, we were able to find 6979 redundant ones (2.570913e+01%).
+In total, we pruned 12005 out of 32172 memaccesses (3.731506e+01%)
+48028 pointers received from PointerDetectionAnalysis
+I identified 27948 pointer arithmetic instructions, I missed at least 6 ones due to imprecision. 
+I identified 21175 out of 26020 gep operands (8.137971e+01%).
+2572 out of 27948 modified pointers (9.202806e+00%) need to be wrapped
+We pruned 864 instrumentation points out of 22739 (3.799639e+00%).
+We need 41419 checks in total, we needed 41636 before our instrumentation point optimization
+For 41419 checks, we emit 14950 sizeExp calls
+Bail stats for isInBoundsAnalysis: 
+        #1: function argument. 14637 occurrences.
+        #2: load. 14035 occurrences.
+        #3: getelementptr. 4277 occurrences.
+        #4: phi. 3384 occurrences.
+        #5: call. 3183 occurrences.
+        #6: allocation site. 173 occurrences.
+        #7: select. 97 occurrences.
+        #8: add. 9 occurrences.
+        #9: and. 6 occurrences.
+        #10: bitcast. 2 occurrences.
+
+SPEC
+lbm: In total, we pruned 74 out of 316 memaccesses (2.341772e+01%)
+mcf: In total, we pruned 244 out of 614 memaccesses (3.973941e+01%)
+bzip2: In total, we pruned 2402 out of 5050 memaccesses (4.756436e+01%)
+milc: In total, we pruned 2513 out of 4301 memaccesses (5.842827e+01%)
+sjeng: In total, we pruned 3342 out of 5603 memaccesses (5.964662e+01%)
+sphinx: In total, we pruned 2266 out of 6978 memaccesses (3.247349e+01%)
+hmmer: In total, we pruned 5024 out of 14316 memaccesses (3.509360e+01%)
+h264ref: In total, we pruned 15879 out of 43335 memaccesses (3.664244e+01%)
+gobmk: In total, we pruned 10375 out of 22974 memaccesses (4.515974e+01%)
+gcc: In total, we pruned 59963 out of 138260 memaccesses (4.336974e+01%)

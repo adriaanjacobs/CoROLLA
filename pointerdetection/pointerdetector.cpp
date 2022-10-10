@@ -1,7 +1,7 @@
+#include <llvm-15/llvm/IR/Constants.h>
 #include <util.h>
-#include "mpk_instrument/pass.h"
+#include "safetyanalysis/pass.h"
 #include "pointerdetection.h"
-#include "wrapgeps/wrapgeps.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/Instructions.h"
 
@@ -96,7 +96,7 @@ llvm::Value* PointerDetector::strip_pointer_casts(llvm::Value *pointer) {
             }
         } else if (auto bitcastOp = llvm::dyn_cast<llvm::BitCastOperator>(pointer)) {
             pointer = bitcastOp->getOperand(0);
-        } else if (AllocWrapperDetector::isStaticAllocationSite(pointer) || GepDetector::isaSafePointerSourceType(pointer)
+        } else if (AllocWrapperDetector::isStaticAllocationSite(pointer) || isaSafePointerSourceType(pointer)
                     || llvm::isa<llvm::ConstantPointerNull, llvm::ConstantInt>(pointer)
         ) {
             break;
@@ -361,126 +361,16 @@ void PointerDetector::mark_pointer_origins(llvm::Value* pointer) {
             done = true;
             break;
         } else if (auto binaryOp = llvm::dyn_cast<llvm::BinaryOperator>(current)) {
-            {
-                assert(is_confirmed_pointer(binaryOp));
-            }
-            auto lhs = binaryOp->getOperand(0);
-            auto rhs = binaryOp->getOperand(1);
-
-            auto lhStatus = is_unconfirmed_pointer(lhs);
-            auto rhStatus = is_unconfirmed_pointer(rhs);
-
-            if (!lhStatus.has_value() && !rhStatus.has_value()) {
-                // TODO: maybe check these cases manually because we're losing info here
-                done = true;
-                break;
-            }
-
-            switch (binaryOp->getOpcode()) {
-                case llvm::BinaryOperator::LShr:
-                case llvm::BinaryOperator::Shl: {
-                    // same as below, except int << ptr is INVALID
-                    // only ptr << int is valid essentially
-                    if (lhStatus.has_value())
-                        assert(lhStatus == POINTER);
-                    if (rhStatus.has_value())
-                        assert(rhStatus == INTEGER);
-                } [[fallthrough]];
-                case llvm::BinaryOperator::Or:
-                case llvm::BinaryOperator::Add:
-                    // only `ptr + int` and `int + ptr` are valid
-                case llvm::BinaryOperator::And: {
-                    // since this HAS to return a pointer, the only valid possibilities are
-                    // `ptr & int` or `int & ptr` and the ints HAVE to be base masks, not offset masks
-
-                    if (lhStatus.has_value()) {
-                        if (lhStatus == POINTER) {
-                            assert(!rhStatus.has_value() || rhStatus == INTEGER);
-                            toMark.push_back({lhs, POINTER});
-                            toMark.push_back({rhs, INTEGER});
-                            current = lhs;
-                        } else {
-                            assert(lhStatus == INTEGER); 
-                            assert(!rhStatus.has_value() || rhStatus == POINTER);
-                            toMark.push_back({lhs, INTEGER});
-                            toMark.push_back({rhs, POINTER});
-                            current = rhs;
-                        }
-                    } else {
-                        assert(rhStatus.has_value());
-                        if (rhStatus == POINTER) {
-                            assert(!lhStatus.has_value() || lhStatus == INTEGER);
-                            toMark.push_back({rhs, POINTER});
-                            toMark.push_back({lhs, INTEGER});
-                            current = rhs;
-                        } else {
-                            assert(rhStatus == INTEGER); 
-                            assert(!lhStatus.has_value() || lhStatus == POINTER);
-                            toMark.push_back({rhs, INTEGER});
-                            toMark.push_back({lhs, POINTER});
-                            current = lhs;
-                        }
-                    }
-                } break;
-                case llvm::BinaryOperator::Sub: {
-                    // only `ptr - int` and `int - neg_ptr` are valid
-
-                    if (lhStatus.has_value()) {
-                        if (lhStatus == POINTER) {
-                            assert(!rhStatus.has_value() || rhStatus == INTEGER);
-                            toMark.push_back({lhs, POINTER});
-                            toMark.push_back({rhs, INTEGER});
-                            current = lhs;
-                        } else {
-                            assert(lhStatus == INTEGER);
-                            assert(!rhStatus.has_value() || rhStatus == NEGATED_POINTER);
-                            toMark.push_back({lhs, INTEGER});
-                            toMark.push_back({rhs, NEGATED_POINTER});
-                            done = true;
-                        }
-                    } else {
-                        assert(rhStatus.has_value());
-                        if (rhStatus == INTEGER) {
-                            assert(!lhStatus.has_value() || lhStatus == POINTER);
-                            toMark.push_back({lhs, POINTER});
-                            toMark.push_back({rhs, INTEGER});
-                            current = lhs;
-                        } else {
-                            assert(rhStatus == NEGATED_POINTER);
-                            assert(!lhStatus.has_value() || lhStatus == INTEGER);
-                            toMark.push_back({lhs, INTEGER});
-                            toMark.push_back({rhs, NEGATED_POINTER});
-                            done = true;
-                        }
-                    }
-                } break;
-                case llvm::Instruction::Mul: {
-                    assert(lhStatus.has_value() || rhStatus.has_value());
-                    if ((!rhStatus.has_value() || rhStatus == INTEGER)) {
-                        ASSERT_ELSE_UNKOWN(llvm::isa<llvm::ConstantInt>(rhs) && llvm::cast<llvm::ConstantInt>(rhs)->getValue() == -1, binaryOp);
-                        toMark.push_back({lhs, NEGATED_POINTER});
-                        toMark.push_back({rhs, INTEGER});
-                        done = true;
-                    } else HANDLE_UNKOWN_VALUE(binaryOp);
-
-                    // if (lhStatus.has_value()) {
-                    //     ASSERT_ELSE_UNKOWN(!rhStatus.has_value() || rhStatus == INTEGER, binaryOp);
-                    //     toMark.push_back({lhs, lhStatus.value()});
-                    //     toMark.push_back({rhs, INTEGER});
-                    //     if (lhStatus == POINTER)
-                    //         current = lhs;
-                    //     else done = true;
-                    // } else {
-                    //     assert(rhStatus.has_value());
-                    //     ASSERT_ELSE_UNKOWN(!lhStatus.has_value() || lhStatus == INTEGER, binaryOp);
-                    //     toMark.push_back({rhs, rhStatus.value()});
-                    //     toMark.push_back({lhs, INTEGER});
-                    // }
-                } break;
-                default: {
-                    HANDLE_UNKOWN_VALUE(current);
-                }
-            }
+            auto ret = mark_binaryOp_origins(binaryOp, toMark);
+            if (ret.has_value())
+                current = ret.value();
+            else done = true;
+        } else if (auto constExp = llvm::dyn_cast<llvm::ConstantExpr>(current)) {
+            ASSERT_ELSE_UNKOWN(!constExp->isCast() && !constExp->isCompare(), constExp);
+            auto ret = mark_binaryOp_origins(constExp, toMark);
+            if (ret.has_value())
+                current = ret.value();
+            else done = true;
         } else if (auto phiNode = llvm::dyn_cast<llvm::PHINode>(current)) {
             // `current` is, unconditionally, a confirmed pointer which is used for memory access etc.
             assert(is_confirmed_pointer(current));
@@ -538,6 +428,134 @@ void PointerDetector::mark_pointer_origins(llvm::Value* pointer) {
     assert(done);
 }
 
+template<typename T>
+std::optional<llvm::Value*> PointerDetector::mark_binaryOp_origins(T* binaryOp, llvm::SmallVector<std::pair<llvm::Value *, ValueType>>& toMark) {
+    assert(is_confirmed_pointer(binaryOp));
+
+    auto lhs = binaryOp->getOperand(0);
+    auto rhs = binaryOp->getOperand(1);
+
+    auto lhStatus = is_unconfirmed_pointer(lhs);
+    auto rhStatus = is_unconfirmed_pointer(rhs);
+
+    if (!lhStatus.has_value() && !rhStatus.has_value()) {
+        // TODO: maybe check these cases manually because we're losing info here
+        return std::nullopt;
+    }
+
+    llvm::Value* current = binaryOp;
+    bool done = false;
+
+    switch (binaryOp->getOpcode()) {
+        case llvm::BinaryOperator::LShr:
+        case llvm::BinaryOperator::Shl: {
+            // same as below, except int << ptr is INVALID
+            // only ptr << int is valid essentially
+            if (lhStatus.has_value())
+                assert(lhStatus == POINTER);
+            if (rhStatus.has_value())
+                assert(rhStatus == INTEGER);
+        } [[fallthrough]];
+        case llvm::BinaryOperator::Or:
+        case llvm::BinaryOperator::Add:
+            // only `ptr + int` and `int + ptr` are valid
+        case llvm::BinaryOperator::And: {
+            // since this HAS to return a pointer, the only valid possibilities are
+            // `ptr & int` or `int & ptr` and the ints HAVE to be base masks, not offset masks
+
+            if (lhStatus.has_value()) {
+                if (lhStatus == POINTER) {
+                    assert(!rhStatus.has_value() || rhStatus == INTEGER);
+                    toMark.push_back({lhs, POINTER});
+                    toMark.push_back({rhs, INTEGER});
+                    current = lhs;
+                } else {
+                    assert(lhStatus == INTEGER); 
+                    assert(!rhStatus.has_value() || rhStatus == POINTER);
+                    toMark.push_back({lhs, INTEGER});
+                    toMark.push_back({rhs, POINTER});
+                    current = rhs;
+                }
+            } else {
+                assert(rhStatus.has_value());
+                if (rhStatus == POINTER) {
+                    assert(!lhStatus.has_value() || lhStatus == INTEGER);
+                    toMark.push_back({rhs, POINTER});
+                    toMark.push_back({lhs, INTEGER});
+                    current = rhs;
+                } else {
+                    assert(rhStatus == INTEGER); 
+                    assert(!lhStatus.has_value() || lhStatus == POINTER);
+                    toMark.push_back({rhs, INTEGER});
+                    toMark.push_back({lhs, POINTER});
+                    current = lhs;
+                }
+            }
+        } break;
+        case llvm::BinaryOperator::Sub: {
+            // only `ptr - int` and `int - neg_ptr` are valid
+
+            if (lhStatus.has_value()) {
+                if (lhStatus == POINTER) {
+                    assert(!rhStatus.has_value() || rhStatus == INTEGER);
+                    toMark.push_back({lhs, POINTER});
+                    toMark.push_back({rhs, INTEGER});
+                    current = lhs;
+                } else {
+                    assert(lhStatus == INTEGER);
+                    assert(!rhStatus.has_value() || rhStatus == NEGATED_POINTER);
+                    toMark.push_back({lhs, INTEGER});
+                    toMark.push_back({rhs, NEGATED_POINTER});
+                    done = true;
+                }
+            } else {
+                assert(rhStatus.has_value());
+                if (rhStatus == INTEGER) {
+                    assert(!lhStatus.has_value() || lhStatus == POINTER);
+                    toMark.push_back({lhs, POINTER});
+                    toMark.push_back({rhs, INTEGER});
+                    current = lhs;
+                } else {
+                    assert(rhStatus == NEGATED_POINTER);
+                    assert(!lhStatus.has_value() || lhStatus == INTEGER);
+                    toMark.push_back({lhs, INTEGER});
+                    toMark.push_back({rhs, NEGATED_POINTER});
+                    done = true;
+                }
+            }
+        } break;
+        case llvm::Instruction::Mul: {
+            assert(lhStatus.has_value() || rhStatus.has_value());
+            if ((!rhStatus.has_value() || rhStatus == INTEGER)) {
+                ASSERT_ELSE_UNKOWN(llvm::isa<llvm::ConstantInt>(rhs) && llvm::cast<llvm::ConstantInt>(rhs)->getValue() == -1, binaryOp);
+                toMark.push_back({lhs, NEGATED_POINTER});
+                toMark.push_back({rhs, INTEGER});
+                done = true;
+            } else HANDLE_UNKOWN_VALUE(binaryOp);
+
+            // if (lhStatus.has_value()) {
+            //     ASSERT_ELSE_UNKOWN(!rhStatus.has_value() || rhStatus == INTEGER, binaryOp);
+            //     toMark.push_back({lhs, lhStatus.value()});
+            //     toMark.push_back({rhs, INTEGER});
+            //     if (lhStatus == POINTER)
+            //         current = lhs;
+            //     else done = true;
+            // } else {
+            //     assert(rhStatus.has_value());
+            //     ASSERT_ELSE_UNKOWN(!lhStatus.has_value() || lhStatus == INTEGER, binaryOp);
+            //     toMark.push_back({rhs, rhStatus.value()});
+            //     toMark.push_back({lhs, INTEGER});
+            // }
+        } break;
+        default: {
+            HANDLE_UNKOWN_VALUE(current);
+        }
+    }
+
+    if (!done)
+        return current;
+    return std::nullopt;
+}
 
 const PointerDetector::CallSiteInfo& PointerDetector::getCallSiteInfo(llvm::Function* function) const {
     auto [callSiteInfoIt, inserted] = cachedCallSiteInfo.try_emplace(function);
@@ -944,6 +962,7 @@ std::optional<PointerDetector::ValueType> PointerDetector::is_unconfirmed_pointe
                     assert(dataLayout.getTypeSizeInBits(current->getType()) == 64);
                     current = constantExpr->getOperand(0);
                 } break;
+                case llvm::Instruction::Add:
                 case llvm::Instruction::Sub: {
                     return handle_unconfirmed_binaryOp(constantExpr);
                 } break;

@@ -148,7 +148,7 @@ inline std::string getModuleHash(llvm::Module& module) {
             }
         }
     
-    return module.getSourceFileName() + "_" + module.getTargetTriple() + "_" + std::to_string(module.size()) + "_" + std::to_string(bbcount) + "_" + std::to_string(instcount) + "_" + std::to_string(hash_value);
+    return std::to_string(llvm::hash_value(module.getSourceFileName())) + "_" + module.getTargetTriple() + "_" + std::to_string(module.size()) + "_" + std::to_string(bbcount) + "_" + std::to_string(instcount) + "_" + std::to_string(hash_value);
 }
 
 namespace llvm {
@@ -177,6 +177,10 @@ namespace llvm {
             return accumulator;
         }
     };
+}
+
+inline bool isaSafePointerSourceType(llvm::Value* val) {
+    return llvm::isa<llvm::LoadInst, llvm::ExtractValueInst, llvm::ExtractElementInst, llvm::Argument,llvm::CallBase,llvm::PHINode,llvm::SelectInst>(val);
 }
 
 namespace std {

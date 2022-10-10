@@ -8,7 +8,7 @@
 #include <llvm/IR/Operator.h>
 #include <llvm/Support/Casting.h>
 #include <optional>
-#include <mpk_instrument/pass.h>
+#include <safetyanalysis/pass.h>
 #include <llvm/Analysis/LazyBlockFrequencyInfo.h>
 #include <llvm/Analysis/BasicAliasAnalysis.h>
 
@@ -74,6 +74,8 @@ public:
 
         void identify_start_pointers(llvm::Module& module);
         void mark_pointer_origins(llvm::Value* pointer);
+        template<typename T>
+        std::optional<llvm::Value*> mark_binaryOp_origins(T* binaryOp, llvm::SmallVector<std::pair<llvm::Value *, ValueType>>& toMark);
         void mark_pointer_uses(llvm::Value* pointer);
         void mark_actual_vs_formal_args(llvm::Module& module);
         void mark_value(llvm::Value*, ValueType status);
