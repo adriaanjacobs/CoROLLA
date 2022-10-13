@@ -1,4 +1,4 @@
-project(mpk_instrument)
+project(safetyanalysis)
 
 cmake_minimum_required(VERSION 3.4.3)
 
@@ -7,7 +7,7 @@ cmake_minimum_required(VERSION 3.4.3)
 #===============================================================================
 add_library(IRPass SHARED pass.cpp allocationwrappers.cpp offsetfinder.cpp boundschecker.cpp)
 target_compile_options(IRPass PRIVATE ${COMMON_FLAGS})
-target_link_libraries(IRPass ptrdetectionpass ${svf_libs})
+target_link_libraries(IRPass ptrdetectionpass)
 
 add_executable(mpk_instrument passrunner.cpp)
 target_compile_options(mpk_instrument PRIVATE ${COMMON_FLAGS})
