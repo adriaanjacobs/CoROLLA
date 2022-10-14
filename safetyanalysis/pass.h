@@ -1,5 +1,6 @@
 #pragma once
 
+#include "attestation/attestinstrument.h"
 #include "svfpass/svfpass.h"
 #include <bitset>
 #include <llvm/Support/raw_ostream.h>
@@ -154,7 +155,7 @@ public:
     // Analyze the bitcode/IR in the given LLVM module.
     Result run(llvm::Module& module, [[maybe_unused]] llvm::ModuleAnalysisManager& MAM);
 
-    template<typename PassT>
+    template<typename PassT, typename VerifierT = llvm::VerifierPass>
     static void addPassesAround(llvm::ModulePassManager& MPM) {
 //         MPM.addPass(llvm::createModuleToFunctionPassAdaptor(llvm::SimplifyCFGPass{}));
 //         MPM.addPass(llvm::createModuleToFunctionPassAdaptor(llvm::PromotePass{}));
@@ -220,7 +221,7 @@ public:
         // our own instrumentation
         MPM.addPass(PassT{});
         // Just to be sure that none of the passes messed up the module.
-        MPM.addPass(llvm::VerifierPass{});
+        MPM.addPass(VerifierT{});
         // this cancels out the transformations by loopsimplify
         MPM.addPass(llvm::createModuleToFunctionPassAdaptor(llvm::SimplifyCFGPass{}));
         // for any instrumentation we emitted
@@ -229,7 +230,7 @@ public:
         MPM.addPass(llvm::createModuleToFunctionPassAdaptor(llvm::DCEPass{}));
         // running mem2reg after the transformation has proven to have amazing effects on my attestation instrumentation
         MPM.addPass(llvm::createModuleToFunctionPassAdaptor(llvm::PromotePass{}));
-        MPM.addPass(llvm::VerifierPass{});
+        MPM.addPass(VerifierT{});
     }
 };
 
