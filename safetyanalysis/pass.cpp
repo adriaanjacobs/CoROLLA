@@ -40,8 +40,6 @@
 #include <string>
 
 
-
-
 UnsafeAccessFinderAnalysis::UnsafeAccessInfo::UnsafeAccessInfo(llvm::Module& module, llvm::ModuleAnalysisManager& MAM, bool onlyStores) :
     module{module}, MAM{MAM}    
 {
