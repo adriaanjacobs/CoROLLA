@@ -1,7 +1,7 @@
 #pragma once
 
 #include <cstdint>
-#include <llvm-15/llvm/Support/HashBuilder.h>
+#include <llvm/Support/HashBuilder.h>
 #include <llvm/IR/PassManager.h>
 #include <llvm/Analysis/LoopAnalysisManager.h>
 #include <llvm/IR/Instructions.h>
