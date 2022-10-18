@@ -49,25 +49,32 @@ struct run_on_destruct {
     ~run_on_destruct() { func(); }
 };
 
-#define HANDLE_UNKOWN_VALUE(val)                                    \
-    do {        \
-        llvm::outs() << "Unkown value type: \n";      \
-        llvm::outs() << "\t" << *val << "\n\n";     \
-        llvm::outs() << "Is constant: " << (llvm::isa<llvm::Constant>(val) ? "yes" : "no") << "\n"; \
+#define HANDLE_UNKOWN_VALUE(val)                                                                                \
+    do {                                                                                                        \
+        if (auto inst__ = llvm::dyn_cast<llvm::Instruction>(val)) {                                             \
+            std::error_code code;                                                                               \
+            llvm::raw_fd_ostream unknownValueOutputFile("currentmodule.atUnknownValue.debug.ll", code);         \
+            assert(code.value() == 0);                                                                          \
+            inst__->getModule()->print(unknownValueOutputFile, nullptr);                                        \
+            llvm::outs() << "Printed module for debugging!\n";                                                  \
+        }                                                                                                       \
+        llvm::outs() << "Unkown value type: \n";                                                                \
+        llvm::outs() << "\t" << *val << "\n\n";                                                                 \
+        llvm::outs() << "Is constant: " << (llvm::isa<llvm::Constant>(val) ? "yes" : "no") << "\n";             \
         llvm::outs() << "Is GlobalVariable: " << (llvm::isa<llvm::GlobalVariable>(val) ? "yes" : "no") << "\n"; \
-        llvm::outs() << "Is ConstantData: " << (llvm::isa<llvm::ConstantData>(val) ? "yes" : "no") << "\n"; \
-        llvm::outs() << "Is instruction: " << (llvm::isa<llvm::Instruction>(val) ? "yes" : "no") << "\n"; \
-        llvm::outs() << "Is operator: " << (llvm::isa<llvm::Operator>(val) ? "yes" : "no") << "\n"; \
-        llvm::outs().flush(); \
-        assert(!"Unkown instruction!");     \
+        llvm::outs() << "Is ConstantData: " << (llvm::isa<llvm::ConstantData>(val) ? "yes" : "no") << "\n";     \
+        llvm::outs() << "Is instruction: " << (llvm::isa<llvm::Instruction>(val) ? "yes" : "no") << "\n";       \
+        llvm::outs() << "Is operator: " << (llvm::isa<llvm::Operator>(val) ? "yes" : "no") << "\n";             \
+        llvm::outs().flush();                                                                                   \
+        assert(!"Unkown instruction!");                                                                         \
     } while (false)
 
-#define ASSERT_ELSE_UNKOWN(cond, val) \
-    do {                                                \
-        bool condVal = static_cast<bool>(cond);     \
-        if (!condVal) {                                \
-            HANDLE_UNKOWN_VALUE(val);               \
-        }                                           \
+#define ASSERT_ELSE_UNKOWN(cond, val)           \
+    do {                                        \
+        bool condVal = static_cast<bool>(cond); \
+        if (!condVal) {                         \
+            HANDLE_UNKOWN_VALUE(val);           \
+        }                                       \
     } while (false)
 
 #define BREAKPOINT() \

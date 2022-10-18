@@ -146,7 +146,7 @@ bool BoundsChecker::isInBounds_internal(llvm::Value* offsetPtr, llvm::APInt offs
                 offset += constInt->getValue();
             llvm::ConstantRange userspace({64, 8'388'608U}, {64, UINT64_MAX >> 17});
             if (userspace.contains(offset)) {
-                llvm::outs() << "Offset to NULL: " << offset << "\n";
+                // llvm::outs() << "Offset to NULL: " << offset << "\n";
                 return false;
             }
             return true; // the program will crash when dereferencing these anyway
