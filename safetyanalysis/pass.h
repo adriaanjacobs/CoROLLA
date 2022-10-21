@@ -181,9 +181,9 @@ public:
 //         // )));
         // print the initial module
         auto code = new std::error_code();
-        auto ostream = new llvm::raw_fd_ostream("inputmodule.debug.ll", *code);
+        auto beforestream = new llvm::raw_fd_ostream("inputmodule.debug.ll", *code);
         assert(code->value() == 0);
-        MPM.addPass(llvm::PrintModulePass(*ostream));
+        MPM.addPass(llvm::PrintModulePass(*beforestream));
         // check the initial module
         MPM.addPass(llvm::VerifierPass{});
         // infer function attributes to help allocationwrapperanalysis and later points-to analyses
@@ -231,6 +231,9 @@ public:
         // running mem2reg after the transformation has proven to have amazing effects on my attestation instrumentation
         MPM.addPass(llvm::createModuleToFunctionPassAdaptor(llvm::PromotePass{}));
         MPM.addPass(VerifierT{});
+        auto afterstream = new llvm::raw_fd_ostream("outputmodule.debug.ll", *code);
+        assert(code->value() == 0);
+        MPM.addPass(llvm::PrintModulePass(*afterstream));
     }
 };
 
