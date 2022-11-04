@@ -223,3 +223,19 @@ namespace llvm {
     using OptimizationLevel = PassBuilder::OptimizationLevel;
 }
 #endif
+
+inline void dumpModuleToFile(llvm::Module& module, std::string_view name) {
+    std::error_code code;
+    llvm::raw_fd_ostream file(name, code);
+    assert(code.value() == 0);
+    module.print(file, nullptr);
+}
+
+inline bool isCallTo(llvm::StringRef name, llvm::Instruction* requirer) {
+    auto call = llvm::dyn_cast<llvm::CallBase>(requirer);
+    if (!call)
+        return false;
+    if (auto calledFunc = call->getCalledFunction(); calledFunc && calledFunc->getName() == name)
+        return true;
+    return false;
+}
