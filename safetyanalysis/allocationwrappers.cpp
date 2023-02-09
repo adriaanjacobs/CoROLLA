@@ -12,6 +12,8 @@
 #include <llvm/IR/Instructions.h>
 #include <llvm/IR/Operator.h>
 
+#include <dirent.h>
+
 bool AllocWrapperDetector::isStaticAllocationSite(llvm::Value *val) {
     return llvm::isa<llvm::AllocaInst, llvm::GlobalVariable>(val);
 }
@@ -505,7 +507,10 @@ const llvm::DenseMap<llvm::StringRef, std::function<std::optional<size_t>(AllocW
     {"png_create_write_struct", nullptr},
     {"popen", nullptr},
     {"pthread_getspecific", nullptr},
-    {"readdir", nullptr},
+    {"readdir", [] (AllocWrapperDetector* self, llvm::CallBase* callInst) {
+        // https://man7.org/linux/man-pages/man3/readdir.3.html
+        return sizeof(struct dirent);
+    }},
     {"readdir64", nullptr},
     {"safe_calloc", nullptr},
     {"safe_malloc", nullptr},

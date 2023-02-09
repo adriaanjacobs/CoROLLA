@@ -245,9 +245,9 @@ llvm::PreservedAnalyses MemAccessInstrumentator::run(llvm::Module &module, llvm:
     llvm::Type* voidTy = llvm::Type::getVoidTy(module.getContext());
     llvm::FunctionType* fType = llvm::FunctionType::get(voidTy, false);
     for (auto inst : loadAndStores) {
-
-        auto call_wrpkru = llvm::CallInst::Create(wrpkru, llvm::ArrayRef<llvm::Value*>{llvm::ConstantInt::get(int32Ty, 0)}, "", inst);
 #if 0
+        auto call_wrpkru = llvm::CallInst::Create(wrpkru, llvm::ArrayRef<llvm::Value*>{llvm::ConstantInt::get(int32Ty, 0)}, "", inst);
+#elif 0
         auto call_rdpkru = llvm::CallInst::Create(rdpkru, "", inst);
         auto cmp = new llvm::ICmpInst(inst, llvm::ICmpInst::Predicate::ICMP_EQ, call_rdpkru, llvm::ConstantInt::get(int32Ty, 0));
         bool isStoreInst = llvm::isa<llvm::StoreInst>(inst);
@@ -281,6 +281,15 @@ llvm::PreservedAnalyses MemAccessInstrumentator::run(llvm::Module &module, llvm:
     // We are lazy here and just claim that this transformation pass invalidates
     // the results of all other analysis passes.
     return llvm::PreservedAnalyses::none();
+}
+
+void MemAccessInstrumentator::registerAnalyses(llvm::ModuleAnalysisManager &MAM) {
+    // Register our analyses
+    MAM.registerPass([&] { return UnsafeAccessFinderAnalysis{}; });
+    MAM.registerPass([&] { return AllocWrapperAnalysis{}; });
+    MAM.registerPass([&] { return IsInBoundsAnalysis{}; });
+    MAM.registerPass([&] { return PointerDetectionAnalysis{}; });
+    MAM.registerPass([&] { return SillyPerlAnalysis{}; });
 }
 
 llvm::PreservedAnalyses AllocWrapperAlwaysInlineMarkerPass::run(llvm::Module& module, llvm::ModuleAnalysisManager &MAM) {

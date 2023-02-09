@@ -381,4 +381,7 @@ public:
 
     // Transform the bitcode/IR in the given LLVM module.
     llvm::PreservedAnalyses run(llvm::Module &M, llvm::ModuleAnalysisManager &MAM);
+
+    static bool isRequired() { return true; }
+    static void registerAnalyses(llvm::ModuleAnalysisManager& MAM);
 };
