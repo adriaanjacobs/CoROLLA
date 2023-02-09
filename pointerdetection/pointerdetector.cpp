@@ -100,6 +100,9 @@ llvm::Value* PointerDetector::strip_pointer_casts(llvm::Value *pointer) {
             }
         } else if (auto bitcastOp = llvm::dyn_cast<llvm::BitCastOperator>(pointer)) {
             pointer = bitcastOp->getOperand(0);
+        } else if (auto freeze = llvm::dyn_cast<llvm::FreezeInst>(pointer)) {
+            assert((!llvm::isa<llvm::UndefValue, llvm::PoisonValue>(freeze->getOperand(0))));
+            pointer = freeze->getOperand(0);
         } else if (AllocWrapperDetector::isStaticAllocationSite(pointer) || isaSafePointerSourceType(pointer)
                     || llvm::isa<llvm::ConstantPointerNull, llvm::ConstantInt>(pointer)
         ) {
@@ -574,11 +577,11 @@ bool PointerDetector::funcIsOnlyDirectlyCalled(llvm::Value* function, llvm::Dens
     if (function->getNumUses() == 0) 
         return false;
 
-    bool allGood = true;
+    bool onlyDirectlyCalled = true;
     llvm::DenseSet<llvm::ICmpInst*> weirdIcmps;
 
     for (auto& funcUse : function->uses()) {
-        auto result = [&] () -> bool {
+        auto funcIsDirectlyCalled = [&] () -> bool {
             auto user = funcUse.getUser();
             assert(function == funcUse.get());
             if (auto callInst = llvm::dyn_cast<llvm::CallBase>(user)) {
@@ -611,23 +614,23 @@ bool PointerDetector::funcIsOnlyDirectlyCalled(llvm::Value* function, llvm::Dens
             } else HANDLE_UNKOWN_VALUE(user);
         } ();
         
-        if (!result)
-            allGood = false;
+        if (!funcIsDirectlyCalled)
+            onlyDirectlyCalled = false;
     }
 
     if (!weirdIcmps.empty()) {
-        if (!allGood) {
+        if (onlyDirectlyCalled) {
             llvm::outs() << "Waw! Weird ones:\n";
             for (auto icmp : weirdIcmps)
                 llvm::outs() << "\t" << *icmp << "\n";
             llvm::outs() << "\n";
+            llvm::outs().flush();
         }
-        llvm::outs().flush();
-        assert(!allGood);
+        assert(!onlyDirectlyCalled);
     }
        
 
-    return allGood;
+    return onlyDirectlyCalled;
 }
 
 llvm::DenseSet<llvm::Value*> PointerDetector::getIncomingValuesForArgument(llvm::Argument* argument) const {
