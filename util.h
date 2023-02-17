@@ -79,13 +79,6 @@ struct run_on_destruct {
 #define BREAKPOINT() \
     asm("int $3")
 
-#define ATTESTATION_bufferwrite "ATTESTATION_bufferwrite"
-#define ATTESTATION_stackPtrInit "ATTESTATION_stackPtrInit"
-#define ATTESTATION_stackPtrUpdate "ATTESTATION_stackPtrUpdate"
-#define ATTESTATION_preReload "ATTESTATION_preReload"
-#define ATTESTATION_postReload "ATTESTATION_postReload"
-#define ATTESTATION_reloadRequirer "ATTESTATION_reloadRequirer"
-
 inline llvm::FunctionAnalysisManager& getFAM(llvm::Module& module, llvm::ModuleAnalysisManager& MAM) {
     return MAM.getResult<llvm::FunctionAnalysisManagerModuleProxy>(module).getManager();
 }
