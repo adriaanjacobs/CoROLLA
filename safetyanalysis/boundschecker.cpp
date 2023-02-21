@@ -166,8 +166,13 @@ bool BoundsChecker::isInBounds_internal(llvm::Value* offsetPtr, llvm::APInt offs
                 }
             }
             return true;
-        }  else if (auto callInst = llvm::dyn_cast<llvm::CallBase>(current)) {
+        } else if (auto callInst = llvm::dyn_cast<llvm::CallBase>(current)) {
             if (auto calledFunc = callInst->getCalledFunction()) {
+                if (calledFunc->isDeclaration()) {
+                    // if it was an allocation function, we would've found it by now
+                    // maybe i can still model some common ones here?
+                    return false;
+                }
                 // check if all return values happen to be in bounds, if so we gucci
                 for (auto& bb : *calledFunc) {
                     if (auto retInst = llvm::dyn_cast<llvm::ReturnInst>(bb.getTerminator())) {
@@ -177,11 +182,7 @@ bool BoundsChecker::isInBounds_internal(llvm::Value* offsetPtr, llvm::APInt offs
                     }
                 }
                 return true;
-            } else {
-                // maybe i can model some common ones here?
-                // malloc etc are not included here since that will already have been handled by the earlier isBuiltInAllocationSite()
-                // HANDLE_UNKOWN_VALUE(callInst); // these libc calls should generally be classified somehow
-            }
+            } // else indirect call, can't look through those :/. Maybe do a pointer analysis here?
             return false;
         } else if (auto gepInstr = llvm::dyn_cast<llvm::GetElementPtrInst>(current)) {
             if (gepInstr->hasAllConstantIndices()) {
