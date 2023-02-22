@@ -11,7 +11,7 @@ target_link_libraries(IRPass ptrdetectionpass)
 
 add_executable(mpk_instrument passrunner.cpp)
 target_compile_options(mpk_instrument PRIVATE ${COMMON_FLAGS})
-target_link_libraries(mpk_instrument IRPass ${llvm_libs})
+target_link_libraries(mpk_instrument IRPass)
 
 # Allow undefined symbols in shared objects on Darwin (this is the default
 # behaviour on Linux)
