@@ -107,6 +107,11 @@ llvm::Value* PointerDetector::strip_pointer_casts(llvm::Value *pointer) {
                     || llvm::isa<llvm::ConstantPointerNull, llvm::ConstantInt>(pointer)
         ) {
             break;
+        } else if (auto constExpr = llvm::dyn_cast<llvm::ConstantExpr>(pointer)) {
+            auto inst = constExpr->getAsInstruction();
+            auto ret = strip_pointer_casts(inst);
+            inst->deleteValue();
+            return ret;
         } else HANDLE_UNKOWN_VALUE(pointer);
     }
     return pointer;
