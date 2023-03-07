@@ -78,8 +78,8 @@ UnsafeAccessFinderAnalysis::UnsafeAccessInfo::UnsafeAccessInfo(llvm::Module& mod
     for (auto operand : pointerOperands) {
         auto loadStoreSize = dataLayout.getTypeStoreSize(operand->getType()->getPointerElementType());
         assert(loadStoreSize > 0 && loadStoreSize <= UINT64_MAX);
-        llvm::APInt startOffset{64, loadStoreSize, false}; 
-        if (!boundschecker.isInBounds(operand, startOffset)) {
+        llvm::APInt operandSize{64, loadStoreSize, false}; 
+        if (!boundschecker.isInBounds(operand, operandSize)) {
             ASSERT_ELSE_UNKOWN(!llvm::isa<llvm::Constant>(operand), operand);
             auto stripOp = pointerDetector.strip_pointer_casts(operand);
             bool opaqueglobal = false;
