@@ -66,7 +66,7 @@ void PointerDetector::identify_start_pointers(llvm::Module& module) {
     llvm::outs() << pointers.size() << " start pointers identified.\n";
 }
 
-llvm::Value* PointerDetector::strip_pointer_casts(llvm::Value *pointer) {
+llvm::Value* PointerDetector::strip_pointer_casts(llvm::Value *pointer) const {
     const auto& dataLayout = module.getDataLayout();
     auto& boundsChecker = MAM.getResult<IsInBoundsAnalysis>(module);
 
@@ -104,7 +104,7 @@ llvm::Value* PointerDetector::strip_pointer_casts(llvm::Value *pointer) {
             assert((!llvm::isa<llvm::UndefValue, llvm::PoisonValue>(freeze->getOperand(0))));
             pointer = freeze->getOperand(0);
         } else if (AllocWrapperDetector::isStaticAllocationSite(pointer) || isaSafePointerSourceType(pointer)
-                    || llvm::isa<llvm::ConstantPointerNull, llvm::ConstantInt>(pointer)
+                    || llvm::isa<llvm::ConstantPointerNull, llvm::ConstantInt, llvm::Function>(pointer)
         ) {
             break;
         } else if (auto constExpr = llvm::dyn_cast<llvm::ConstantExpr>(pointer)) {
@@ -583,8 +583,6 @@ bool PointerDetector::funcIsOnlyDirectlyCalled(llvm::Value* function, llvm::Dens
         return false;
 
     bool onlyDirectlyCalled = true;
-    llvm::DenseSet<llvm::ICmpInst*> weirdIcmps;
-
     for (auto& funcUse : function->uses()) {
         auto funcIsDirectlyCalled = [&] () -> bool {
             auto user = funcUse.getUser();
@@ -611,29 +609,14 @@ bool PointerDetector::funcIsOnlyDirectlyCalled(llvm::Value* function, llvm::Dens
                 // that some function pointer _may_ refer to function here
                 // Hence, the question becomes how the programmer obtained this function pointer to function?
                 // It may theoretically be a wild guess based on an integer, although that is unlikely
-                // Let's just keep track of an ICmp happening here, so that we can assert later that
-                // the address of the function must have been taken somewhere else. If not, we should
-                // investigate this in more detail
-                weirdIcmps.insert(icmp);
-                return true;
+                // There's no real way to guarantee anything here, let's just be conservative
+                return false;
             } else HANDLE_UNKOWN_VALUE(user);
         } ();
         
         if (!funcIsDirectlyCalled)
             onlyDirectlyCalled = false;
-    }
-
-    if (!weirdIcmps.empty()) {
-        if (onlyDirectlyCalled) {
-            llvm::outs() << "Waw! Weird ones:\n";
-            for (auto icmp : weirdIcmps)
-                llvm::outs() << "\t" << *icmp << "\n";
-            llvm::outs() << "\n";
-            llvm::outs().flush();
-        }
-        assert(!onlyDirectlyCalled);
-    }
-       
+    }       
 
     return onlyDirectlyCalled;
 }
@@ -1004,7 +987,7 @@ std::optional<PointerDetector::ValueType> PointerDetector::is_unconfirmed_pointe
     return POINTER;
 }
 
-std::optional<PointerDetector::BinaryOpValueTypes> PointerDetector::findBinaryOpValueTypes(llvm::BinaryOperator* binaryOp) {
+std::optional<PointerDetector::BinaryOpValueTypes> PointerDetector::findBinaryOpValueTypes(llvm::BinaryOperator* binaryOp) const {
     auto lhs = binaryOp->getOperand(0);
     auto rhs = binaryOp->getOperand(1);
 

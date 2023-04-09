@@ -45,7 +45,7 @@ public:
 
         bool is_confirmed_pointer(llvm::Value* val) const { return pointers.contains(val); }
         std::optional<ValueType> is_unconfirmed_pointer(llvm::Value* val) const;
-        llvm::Value* strip_pointer_casts(llvm::Value* pointer);
+        llvm::Value* strip_pointer_casts(llvm::Value* pointer) const;
         template<typename T>
         std::optional<ValueType> handle_unconfirmed_binaryOp(T* binaryOp) const;
 
@@ -54,7 +54,7 @@ public:
             llvm::Value* nonPointerOperand;
         };
 
-        std::optional<BinaryOpValueTypes> findBinaryOpValueTypes(llvm::BinaryOperator* binaryOp);
+        std::optional<BinaryOpValueTypes> findBinaryOpValueTypes(llvm::BinaryOperator* binaryOp) const;
 
         struct CallSiteInfo {
             llvm::DenseSet<llvm::CallBase*> directCallSites;
