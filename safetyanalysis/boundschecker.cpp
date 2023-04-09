@@ -57,7 +57,7 @@ bool BoundsChecker::isInBounds(llvm::Value* offsetPtr, llvm::APInt storeSize) {
             auto allocSize = allocDetector.findMinimumAllocSize(current);
 
             if (!allocSize.has_value()) 
-                allocSize = {0};
+                allocSize = llvm::APInt{64, 0};
             
             bool ret = offset.sge(0) && offset.sle(allocSize.value());
             if (auto alloca = llvm::dyn_cast<llvm::AllocaInst>(current)) {

@@ -12,8 +12,6 @@
 #include <llvm/IR/Instructions.h>
 #include <llvm/IR/Operator.h>
 
-#include <dirent.h>
-
 bool AllocWrapperDetector::isStaticAllocationSite(llvm::Value *val) {
     return llvm::isa<llvm::AllocaInst, llvm::GlobalVariable>(val);
 }
@@ -57,14 +55,18 @@ llvm::APInt AllocWrapperDetector::findMinimumUnsignedValue(llvm::Value* val, llv
     }
 }
 
-std::optional<size_t> AllocWrapperDetector::findMinimumAllocSize(llvm::Value* allocInstr) {
+std::optional<llvm::APInt> AllocWrapperDetector::findMinimumAllocSize(llvm::Value* allocInstr) {
     ASSERT_ELSE_UNKOWN(isBuiltInAllocationSite(allocInstr), allocInstr);
     auto& dataLayout = module.getDataLayout();
     if (isStaticAllocationSite(allocInstr)) {
         if (auto allocaInstr = llvm::dyn_cast<llvm::AllocaInst>(allocInstr)) {
-            return dataLayout.getTypeAllocSize(allocaInstr->getAllocatedType());
+            auto size = dataLayout.getTypeAllocSize(allocaInstr->getAllocatedType());
+            ASSERT_ELSE_UNKOWN(size > 0, allocInstr);
+            return llvm::APInt{64, size, true};
         } else if (auto globalVariable = llvm::dyn_cast<llvm::GlobalVariable>(allocInstr)) {
-            return dataLayout.getTypeAllocSize(globalVariable->getType()->getPointerElementType());
+            auto size = dataLayout.getTypeAllocSize(globalVariable->getType()->getPointerElementType());
+            ASSERT_ELSE_UNKOWN(size > 0, allocInstr);
+            return llvm::APInt{64, size, true};
         } else HANDLE_UNKOWN_VALUE(allocInstr);
     } else if (auto callInst = llvm::dyn_cast<llvm::CallBase>(allocInstr)) {
         auto calledFunc = callInst->getCalledFunction();
@@ -396,30 +398,44 @@ AllocWrapperAnalysis::Result AllocWrapperAnalysis::run(llvm::Module& module, llv
 
 llvm::AnalysisKey AllocWrapperAnalysis::Key;
 
+llvm::APInt AllocWrapperDetector::findMmapSize(llvm::CallBase* callInst) { // redis calls this
+    return findMinimumUnsignedValue(callInst->getArgOperand(1), callInst->getFunction());
+}
+
+llvm::APInt AllocWrapperDetector::sizeOfReturnedPointeeType(llvm::CallBase* callInst) {
+    auto size = module.getDataLayout().getTypeAllocSize(callInst->getCalledFunction()->getReturnType()->getPointerElementType());
+    ASSERT_ELSE_UNKOWN(size > 0, callInst);
+    return llvm::APInt{64, size, true};
+}
+
 // I did not add the globals here because I can't differentiate them at PTSid time
 // Don't know if it matters, but I had a bug on __ctype_toupper_bloc. Don't want to look into it.
-const llvm::DenseMap<llvm::StringRef, std::function<std::optional<size_t>(AllocWrapperDetector*,llvm::CallBase*)>> AllocWrapperDetector::builtinAllocToSize = {
-    {"malloc", [] (AllocWrapperDetector* self, llvm::CallBase* callInst) { 
-        return self->findMinimumUnsignedValue(callInst->getArgOperand(0), callInst->getFunction()).getZExtValue(); 
+const llvm::DenseMap<llvm::StringRef, std::function<llvm::APInt(AllocWrapperDetector*,llvm::CallBase*)>> AllocWrapperDetector::builtinAllocToSize = {
+    {"malloc", [] (AllocWrapperDetector* self, llvm::CallBase* callInst) -> llvm::APInt {
+        return self->findMinimumUnsignedValue(callInst->getArgOperand(0), callInst->getFunction()); 
     }},
-    {"calloc", [] (AllocWrapperDetector* self, llvm::CallBase* callInst) {
+    {"calloc", [] (AllocWrapperDetector* self, llvm::CallBase* callInst) -> llvm::APInt {
         auto lhOperandSize = self->findMinimumUnsignedValue(callInst->getArgOperand(0), callInst->getFunction());
         auto rhOperandSize = self->findMinimumUnsignedValue(callInst->getArgOperand(1), callInst->getFunction());
         auto result = lhOperandSize * rhOperandSize;
         assert(result.getBitWidth() <= 64);
-        return result.getZExtValue();
+        return result;
     }},
-    {"realloc", [] (AllocWrapperDetector* self, llvm::CallBase* callInst) {
-        return self->findMinimumUnsignedValue(callInst->getArgOperand(1), callInst->getFunction()).getZExtValue();
+    {"realloc", [] (AllocWrapperDetector* self, llvm::CallBase* callInst) -> llvm::APInt {
+        return self->findMinimumUnsignedValue(callInst->getArgOperand(1), callInst->getFunction());
     }},
-    {"__errno_location", [] (AllocWrapperDetector* self, llvm::CallBase* callInst) { 
-        return self->module.getDataLayout().getTypeAllocSize(callInst->getCalledFunction()->getReturnType()->getPointerElementType()); 
+    {"__errno_location", [] (AllocWrapperDetector* self, llvm::CallBase* callInst) -> llvm::APInt {
+        return self->sizeOfReturnedPointeeType(callInst);
     }},
-    {"mmap", nullptr},
+    {"mmap", [] (AllocWrapperDetector* self, llvm::CallBase* callInst) -> llvm::APInt { 
+        return self->findMmapSize(callInst);
+    }},
     {"mmap2", nullptr},
-    {"mmap64", nullptr},
+    {"mmap64", [] (AllocWrapperDetector* self, llvm::CallBase* callInst) -> llvm::APInt { 
+        return self->findMmapSize(callInst);
+    }},
     {"aligned_alloc", nullptr},
-    {"alloca", nullptr},
+    {"alloca", nullptr}, // handled as LLVM alloca instruction
 
     // from ExtAPI
     {"\01_fopen", nullptr},
@@ -507,11 +523,14 @@ const llvm::DenseMap<llvm::StringRef, std::function<std::optional<size_t>(AllocW
     {"png_create_write_struct", nullptr},
     {"popen", nullptr},
     {"pthread_getspecific", nullptr},
-    {"readdir", [] (AllocWrapperDetector* self, llvm::CallBase* callInst) {
+    {"readdir", [] (AllocWrapperDetector* self, llvm::CallBase* callInst) -> llvm::APInt {
         // https://man7.org/linux/man-pages/man3/readdir.3.html
-        return sizeof(struct dirent);
+        return self->sizeOfReturnedPointeeType(callInst);
     }},
-    {"readdir64", nullptr},
+    {"readdir64", [] (AllocWrapperDetector* self, llvm::CallBase* callInst) -> llvm::APInt {
+        // https://man7.org/linux/man-pages/man3/readdir64.3.html
+        return self->sizeOfReturnedPointeeType(callInst);
+    }},
     {"safe_calloc", nullptr},
     {"safe_malloc", nullptr},
     {"safecalloc", nullptr},

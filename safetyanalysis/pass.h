@@ -262,7 +262,7 @@ public:
         bool isAllocationSite(llvm::Value* val);
         bool isDynamicAllocationSite(llvm::Value* val);
 
-        std::optional<size_t> findMinimumAllocSize(llvm::Value* allocInstr);
+        std::optional<llvm::APInt> findMinimumAllocSize(llvm::Value* allocInstr);
         llvm::Value* findDefForLoad(llvm::LoadInst* load);
         llvm::Value* findDefForExtractValue(llvm::ExtractValueInst* extractValue);
 
@@ -275,10 +275,12 @@ public:
         llvm::DenseMap<llvm::Function*, AllocWrapperInfo> allocFuncs;
 
         llvm::APInt findMinimumUnsignedValue(llvm::Value* val, llvm::Function* context);
+        llvm::APInt findMmapSize(llvm::CallBase* callInst);
+        llvm::APInt sizeOfReturnedPointeeType(llvm::CallBase* callInst);
         enum struct AllocSiteStatus { NONE, NULLPTR, ALLOCSITE };
         AllocSiteStatus reducesToAllocationSite(llvm::Value* val, llvm::DenseSet<llvm::Value*>& allocSites);
 
-        static const llvm::DenseMap<llvm::StringRef, std::function<std::optional<size_t>(Detector*,llvm::CallBase*)>> builtinAllocToSize;
+        static const llvm::DenseMap<llvm::StringRef, std::function<llvm::APInt(Detector*,llvm::CallBase*)>> builtinAllocToSize;
 
         std::optional<SVF::ExtAPI::extType> deriveExtFnTy(llvm::Value* val);
     public:
