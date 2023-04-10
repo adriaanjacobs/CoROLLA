@@ -156,8 +156,9 @@ bool BoundsChecker::isInBounds_internal(llvm::Value* offsetPtr, llvm::APInt offs
             //     return false;
 
             auto& pointerDetector = MAM.getResult<PointerDetectionAnalysis>(module); 
-            auto incomingVals = pointerDetector.getIncomingValuesForArgument(argument);
-            if (incomingVals.empty())
+            llvm::DenseSet<llvm::Value*> incomingVals;
+            bool isComplete = pointerDetector.getIncomingValuesForArgument(argument, incomingVals);
+            if (!isComplete)
                 return false;
             for (auto argOperand : incomingVals) {
                 assert(argOperand->getType() == argument->getType());

@@ -621,29 +621,22 @@ bool PointerDetector::funcIsOnlyDirectlyCalled(llvm::Value* function, llvm::Dens
     return onlyDirectlyCalled;
 }
 
-llvm::DenseSet<llvm::Value*> PointerDetector::getIncomingValuesForArgument(llvm::Argument* argument) const {
+bool PointerDetector::getIncomingValuesForArgument(llvm::Argument* argument, llvm::DenseSet<llvm::Value*>& incomingVals) const {
     auto function = argument->getParent();
 
     auto& callSiteInfo = getCallSiteInfo(function);
 
-    llvm::DenseSet<llvm::Value*> incomingValues;
-    bool isComplete = [&] () -> bool {
-        if (callSiteInfo.isComplete) {
-            // collect incoming values for the argument value, in suitable callsites
-            for (auto callInst : callSiteInfo.directCallSites) {
-                assert(callInst->getCalledFunction());
-                if (callInst->getCalledFunction() == function && argument->getArgNo() < callInst->arg_size()) {
-                    auto incomingVal = callInst->getArgOperand(argument->getArgNo());
-                    incomingValues.insert(incomingVal);
-                } else return false;
-            }
-            return true;
-        } else return false;
-    }();
-    
-    if (!isComplete)
-        incomingValues.clear();
-    return incomingValues;
+    bool isComplete = callSiteInfo.isComplete;
+    // collect incoming values for the argument value, in suitable callsites
+    for (auto callInst : callSiteInfo.directCallSites) {
+        assert(callInst->getCalledFunction());
+        if (callInst->getCalledFunction() == function && argument->getArgNo() < callInst->arg_size()) {
+            auto incomingVal = callInst->getArgOperand(argument->getArgNo());
+            incomingVals.insert(incomingVal);
+        } else isComplete = false;
+    }
+
+    return isComplete;
 }
 
 template<typename T>
@@ -889,9 +882,10 @@ std::optional<PointerDetector::ValueType> PointerDetector::is_unconfirmed_pointe
             } else {
                 auto argument = llvm::dyn_cast<llvm::Argument>(current);
                 assert(argument);
-                auto argIncomers = getIncomingValuesForArgument(argument);
+                llvm::DenseSet<llvm::Value*> argIncomers;
+                bool isComplete = getIncomingValuesForArgument(argument, argIncomers);
                 incomingValues.insert(argIncomers.begin(), argIncomers.end());
-                if (incomingValues.empty())
+                if (!isComplete)
                     return std::nullopt;
             }
 

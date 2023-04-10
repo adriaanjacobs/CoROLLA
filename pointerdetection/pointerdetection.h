@@ -61,7 +61,7 @@ public:
             bool isComplete;
         };
         const CallSiteInfo& getCallSiteInfo(llvm::Function* function) const;
-        llvm::DenseSet<llvm::Value*> getIncomingValuesForArgument(llvm::Argument* arg) const;
+        bool getIncomingValuesForArgument(llvm::Argument* argument, llvm::DenseSet<llvm::Value*>& incomingVals) const;
 
         Detector(llvm::Module &M, llvm::ModuleAnalysisManager &MAM);
         
