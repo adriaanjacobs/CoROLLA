@@ -1,14 +1,17 @@
 #include "pass.h"
-#include "llvm/IR/Constants.h"
 #include <util.h>
-#include <wrapgeps/wrapgeps.h>
-#include <cstdint>
+#include <pointerdetection/pointerdetection.h>
+#include <reachability/reachingdefinitions.h>
+
 #include <llvm/IR/Instructions.h>
 #include <llvm/Analysis/AliasAnalysis.h>
 #include <llvm/Analysis/StackSafetyAnalysis.h>
 #include <llvm/Analysis/ScalarEvolutionExpressions.h>
 #include <llvm/Analysis/MemoryDependenceAnalysis.h>
 #include <llvm/Analysis/Delinearization.h>
+#include <llvm/IR/Constants.h>
+
+#include <cstdint>
 
 llvm::AnalysisKey IsInBoundsAnalysis::Key;
 
@@ -248,8 +251,8 @@ bool BoundsChecker::isInBounds_internal(llvm::Value* offsetPtr, llvm::APInt offs
                 So I am not going to give a shit and use the legacy analysis here
             */
 
-            auto& allocWrappers = MAM.getResult<AllocWrapperAnalysis>(module);
-            if (auto definingPtr = allocWrappers.findDefForLoad(loadInst)) {
+            auto& rds = MAM.getResult<ReachingDefinitionsAnalysis>(module);
+            if (auto definingPtr = rds.findDefForLoad(loadInst)) {
                 return isInBounds_internal<DIR>(definingPtr, offset, isInRange);
             }
             return false;

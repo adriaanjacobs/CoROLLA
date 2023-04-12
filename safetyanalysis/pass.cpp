@@ -2,6 +2,7 @@
 
 #include <util.h>
 #include <pointerdetection/pointerdetection.h>
+#include <reachability/reachingdefinitions.h>
 
 #include <llvm/ADT/DenseSet.h>
 #include <llvm/IR/CFG.h>
@@ -289,6 +290,7 @@ void MemAccessInstrumentator::registerAnalyses(llvm::ModuleAnalysisManager &MAM)
     MAM.registerPass([&] { return AllocWrapperAnalysis{}; });
     MAM.registerPass([&] { return IsInBoundsAnalysis{}; });
     MAM.registerPass([&] { return PointerDetectionAnalysis{}; });
+    MAM.registerPass([&] { return ReachingDefinitionsAnalysis{}; });
     MAM.registerPass([&] { return SillyPerlAnalysis{}; });
 }
 

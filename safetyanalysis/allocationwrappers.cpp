@@ -1,16 +1,19 @@
-#include "Util/ExtAPI.h"
 #include "pass.h"
-#include <llvm/IR/GlobalVariable.h>
-#include <llvm/ADT/StringRef.h>
-#include <numeric>
-#include <optional>
 #include <util.h>
 #include <pointerdetection/pointerdetection.h>
+#include <reachability/reachingdefinitions.h>
 
-#include <llvm/ADT/STLExtras.h>
 #include <llvm/IR/Constants.h>
 #include <llvm/IR/Instructions.h>
 #include <llvm/IR/Operator.h>
+#include <llvm/IR/GlobalVariable.h>
+#include <llvm/ADT/STLExtras.h>
+#include <llvm/ADT/StringRef.h>
+
+#include <numeric>
+#include <optional>
+
+#include <Util/ExtAPI.h>
 
 bool AllocWrapperDetector::isStaticAllocationSite(llvm::Value *val) {
     return llvm::isa<llvm::AllocaInst, llvm::GlobalVariable>(val);
@@ -83,54 +86,6 @@ std::optional<llvm::APInt> AllocWrapperDetector::findMinimumAllocSize(llvm::Valu
     } else HANDLE_UNKOWN_VALUE(allocInstr);
 }
 
-llvm::Value* AllocWrapperDetector::findDefForLoad(llvm::LoadInst* load) {
-    ASSERT_ELSE_UNKOWN(load->getModule()->getDataLayout().getTypeSizeInBits(load->getType()) == 64, load);
-
-    // a makeshift quick and dirty definition analysis for this load, catches really trivial cases
-    auto& pointerDetector = MAM.getResult<PointerDetectionAnalysis>(module);
-    auto stripPtrOperand = pointerDetector.strip_pointer_casts(load->getPointerOperand());
-    llvm::Instruction* potDef = load;
-    while ((potDef = potDef->getPrevNode())) {
-        auto& aamanager = getFAM(module, MAM).getResult<llvm::AAManager>(*load->getFunction());
-        if (auto storeInst = llvm::dyn_cast<llvm::StoreInst>(potDef)) {
-            if (pointerDetector.strip_pointer_casts(storeInst->getPointerOperand()) == stripPtrOperand) {
-                // as crazy as it looks, it actually happens in real code
-                return storeInst->getValueOperand();                
-            } else {
-                // i want to use these alias analyses: BasicAA, GlobalsAA, CFLSteensAA
-                auto aliasResult = aamanager.alias(storeInst->getPointerOperand(), load->getPointerOperand());
-                bool couldAlias = aliasResult; // true if there is a possibility of aliasing (must, may & partial)
-                if (couldAlias) // bail out if it can alias. better option is to push them back into an RDS
-                    return nullptr;
-                // else continue the analysis
-            }
-        } else if (auto callInst = llvm::dyn_cast<llvm::CallBase>(potDef)) {
-            if (!aamanager.onlyReadsMemory(callInst)) // may def
-                return nullptr;
-            // else continue the analysis
-        }
-    }
-    return nullptr;
-}
-
-llvm::Value* AllocWrapperDetector::findDefForExtractValue(llvm::ExtractValueInst* extractValue) {
-    assert(extractValue->getNumIndices() == 1);
-    auto indexVal = extractValue->getIndices()[0];
-
-    auto struct_variable = extractValue->getAggregateOperand();
-
-    llvm::Instruction* potDef = extractValue;
-    while ((potDef = potDef->getPrevNode())) {
-        if (auto insertValue = llvm::dyn_cast<llvm::InsertValueInst>(potDef)) {
-            if (insertValue->getAggregateOperand() == struct_variable && insertValue->getIndices()[0] == indexVal) {
-                assert(false && "Who would write this code god damn it");
-                return insertValue->getInsertedValueOperand();
-            }
-        }
-    }
-    return nullptr;
-}
-
 // probably add an argument here that gets filled with the found allocationsites
 AllocWrapperDetector::AllocSiteStatus AllocWrapperDetector::reducesToAllocationSite(llvm::Value* val, llvm::DenseSet<llvm::Value*>& allocSites) {
     static thread_local std::vector<const llvm::Value*> passedInstrs;
@@ -145,6 +100,7 @@ AllocWrapperDetector::AllocSiteStatus AllocWrapperDetector::reducesToAllocationS
     using enum AllocSiteStatus;
 
     auto& pointerDetector = MAM.getResult<PointerDetectionAnalysis>(module);
+    auto& rds = MAM.getResult<ReachingDefinitionsAnalysis>(module);
     if (pointerDetector.is_confirmed_pointer(val)) {
         val = pointerDetector.strip_pointer_casts(val);
         if (isDynamicAllocationSite(val)) {
@@ -189,7 +145,7 @@ AllocWrapperDetector::AllocSiteStatus AllocWrapperDetector::reducesToAllocationS
             // non-zero offsets are probably pool allocators, yeet dat
             return NONE;
         } else if (auto load = llvm::dyn_cast<llvm::LoadInst>(val)) {
-            if (auto defPtr = findDefForLoad(load))
+            if (auto defPtr = rds.findDefForLoad(load))
                 return reducesToAllocationSite(defPtr, allocSites);
             return NONE;
         } else if (llvm::isa<llvm::ConstantPointerNull>(val)) {

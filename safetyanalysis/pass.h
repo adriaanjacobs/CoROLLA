@@ -263,8 +263,6 @@ public:
         bool isDynamicAllocationSite(llvm::Value* val);
 
         std::optional<llvm::APInt> findMinimumAllocSize(llvm::Value* allocInstr);
-        llvm::Value* findDefForLoad(llvm::LoadInst* load);
-        llvm::Value* findDefForExtractValue(llvm::ExtractValueInst* extractValue);
 
         Detector(llvm::Module& module, llvm::ModuleAnalysisManager& MAM);
         
