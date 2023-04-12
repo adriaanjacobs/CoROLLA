@@ -9,17 +9,20 @@ RDSInfo::RDSInfo(llvm::Module& module, llvm::ModuleAnalysisManager& MAM) :
     module{module}, MAM{MAM}
 {}
 
-llvm::Value* RDSInfo::findDefForLoad(llvm::LoadInst* load) {
+llvm::Value* RDSInfo::findDefForLoad(llvm::LoadInst* load, PointerDetector* pointerDetector) {
     ASSERT_ELSE_UNKOWN(load->getModule()->getDataLayout().getTypeSizeInBits(load->getType()) == 64, load);
 
+    if (!pointerDetector)
+        pointerDetector = MAM.getCachedResult<PointerDetectionAnalysis>(module);
+    assert(pointerDetector);
+
     // a makeshift quick and dirty intra-block definition analysis for this load, catches really trivial cases
-    auto& pointerDetector = MAM.getResult<PointerDetectionAnalysis>(module);
-    auto stripPtrOperand = pointerDetector.strip_pointer_casts(load->getPointerOperand());
+    auto stripPtrOperand = pointerDetector->strip_pointer_casts(load->getPointerOperand());
     llvm::Instruction* potDef = load;
     while ((potDef = potDef->getPrevNode())) {
         auto& aamanager = getFAM(module, MAM).getResult<llvm::AAManager>(*load->getFunction());
         if (auto storeInst = llvm::dyn_cast<llvm::StoreInst>(potDef)) {
-            if (pointerDetector.strip_pointer_casts(storeInst->getPointerOperand()) == stripPtrOperand) {
+            if (pointerDetector->strip_pointer_casts(storeInst->getPointerOperand()) == stripPtrOperand) {
                 // as crazy as it looks, it actually happens in real code
                 return storeInst->getValueOperand();                
             } else {

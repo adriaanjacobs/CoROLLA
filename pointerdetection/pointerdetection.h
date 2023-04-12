@@ -33,56 +33,57 @@ public:
 //===----------------------------------------------------------------------===//
 /// This class implements an LLVM module analysis pass.
 ///
+
+struct PointerDetector {
+    llvm::DenseSet<llvm::Value*> pointers;
+    llvm::DenseSet<llvm::Value*> negatedPointers;
+
+    enum ValueType { NEGATED_POINTER = -1, INTEGER = 0, POINTER = 1 };
+
+    bool is_confirmed_pointer(llvm::Value* val) const { return pointers.contains(val); }
+    std::optional<ValueType> is_unconfirmed_pointer(llvm::Value* val) const;
+    llvm::Value* strip_pointer_casts(llvm::Value* pointer) const;
+    llvm::Value* find_real_base(llvm::Value *arithmetic) const;
+    template<typename T>
+    std::optional<ValueType> handle_unconfirmed_binaryOp(T* binaryOp) const;
+
+    struct BinaryOpValueTypes {
+        llvm::Value* pointerOperand;
+        llvm::Value* nonPointerOperand;
+    };
+    std::optional<BinaryOpValueTypes> findBinaryOpValueTypes(llvm::BinaryOperator* binaryOp) const;
+
+    struct CallSiteInfo {
+        llvm::DenseSet<llvm::CallBase*> directCallSites;
+        bool isComplete;
+    };
+    const CallSiteInfo& getCallSiteInfo(llvm::Function* function) const;
+    bool getIncomingValuesForArgument(llvm::Argument* argument, llvm::DenseSet<llvm::Value*>& incomingVals) const;
+
+    llvm::APInt findMinimumUnsignedValue(llvm::Value* val, llvm::Function* context) const;
+    std::optional<llvm::APInt> findConstantOffset(llvm::GEPOperator* gep) const;
+    std::optional<llvm::APInt> findConstantOffset(llvm::BinaryOperator* binaryOp) const;
+
+    PointerDetector(llvm::Module &M, llvm::ModuleAnalysisManager &MAM);
+    
+private:
+    llvm::Module& module;
+    llvm::ModuleAnalysisManager& MAM;
+
+    mutable llvm::DenseMap<llvm::Function*, CallSiteInfo> cachedCallSiteInfo;
+    bool funcIsOnlyDirectlyCalled(llvm::Value* function, llvm::DenseSet<llvm::CallBase*>& callSites) const;
+
+    void identify_start_pointers(llvm::Module& module);
+    void mark_pointer_origins(llvm::Value* pointer);
+    template<typename T>
+    std::optional<llvm::Value*> mark_binaryOp_origins(T* binaryOp, llvm::SmallVector<std::pair<llvm::Value *, ValueType>>& toMark);
+    void mark_pointer_uses(llvm::Value* pointer);
+    void mark_actual_vs_formal_args(llvm::Module& module);
+    void mark_value(llvm::Value*, ValueType status);
+};
+
 class PointerDetectionAnalysis : public llvm::AnalysisInfoMixin<PointerDetectionAnalysis> {
 public:
-
-    struct Detector {
-        llvm::DenseSet<llvm::Value*> pointers;
-        llvm::DenseSet<llvm::Value*> negatedPointers;
-
-        enum ValueType { NEGATED_POINTER = -1, INTEGER = 0, POINTER = 1 };
-
-        bool is_confirmed_pointer(llvm::Value* val) const { return pointers.contains(val); }
-        std::optional<ValueType> is_unconfirmed_pointer(llvm::Value* val) const;
-        llvm::Value* strip_pointer_casts(llvm::Value* pointer) const;
-        llvm::Value* find_real_base(llvm::Value *arithmetic) const;
-        template<typename T>
-        std::optional<ValueType> handle_unconfirmed_binaryOp(T* binaryOp) const;
-
-        struct BinaryOpValueTypes {
-            llvm::Value* pointerOperand;
-            llvm::Value* nonPointerOperand;
-        };
-        std::optional<BinaryOpValueTypes> findBinaryOpValueTypes(llvm::BinaryOperator* binaryOp) const;
-
-        struct CallSiteInfo {
-            llvm::DenseSet<llvm::CallBase*> directCallSites;
-            bool isComplete;
-        };
-        const CallSiteInfo& getCallSiteInfo(llvm::Function* function) const;
-        bool getIncomingValuesForArgument(llvm::Argument* argument, llvm::DenseSet<llvm::Value*>& incomingVals) const;
-
-        llvm::APInt findMinimumUnsignedValue(llvm::Value* val, llvm::Function* context) const;
-        std::optional<llvm::APInt> findConstantOffset(llvm::GEPOperator* gep) const;
-        std::optional<llvm::APInt> findConstantOffset(llvm::BinaryOperator* binaryOp) const;
-
-        Detector(llvm::Module &M, llvm::ModuleAnalysisManager &MAM);
-        
-    private:
-        llvm::Module& module;
-        llvm::ModuleAnalysisManager& MAM;
-
-        mutable llvm::DenseMap<llvm::Function*, CallSiteInfo> cachedCallSiteInfo;
-        bool funcIsOnlyDirectlyCalled(llvm::Value* function, llvm::DenseSet<llvm::CallBase*>& callSites) const;
-
-        void identify_start_pointers(llvm::Module& module);
-        void mark_pointer_origins(llvm::Value* pointer);
-        template<typename T>
-        std::optional<llvm::Value*> mark_binaryOp_origins(T* binaryOp, llvm::SmallVector<std::pair<llvm::Value *, ValueType>>& toMark);
-        void mark_pointer_uses(llvm::Value* pointer);
-        void mark_actual_vs_formal_args(llvm::Module& module);
-        void mark_value(llvm::Value*, ValueType status);
-    };
 
     explicit PointerDetectionAnalysis() = default;
     ~PointerDetectionAnalysis() = default;
@@ -92,10 +93,8 @@ public:
     friend llvm::AnalysisInfoMixin<PointerDetectionAnalysis>;
 
     // Specify the result type of this analysis pass.
-    using Result = Detector;
+    using Result = PointerDetector;
 
     // Analyze the bitcode/IR in the given LLVM module.
     Result run(llvm::Module &M, [[maybe_unused]] llvm::ModuleAnalysisManager &MAM);
 };
-
-using PointerDetector = PointerDetectionAnalysis::Detector;

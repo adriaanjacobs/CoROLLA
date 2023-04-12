@@ -1,6 +1,8 @@
 #include <llvm/Pass.h>
 #include <llvm/Passes/PassBuilder.h>
 
+struct PointerDetector;
+
 class ReachingDefinitionsAnalysis : public llvm::AnalysisInfoMixin<ReachingDefinitionsAnalysis> {
 public:
     static llvm::AnalysisKey Key;
@@ -10,8 +12,8 @@ public:
         llvm::ModuleAnalysisManager& MAM;
         RDSInfo(llvm::Module&, llvm::ModuleAnalysisManager&);
 
-        llvm::Value* findDefForLoad(llvm::LoadInst*);
-        llvm::DenseSet<llvm::Value*> findDefsForExtractValue(llvm::ExtractValueInst*);
+        llvm::Value* findDefForLoad(llvm::LoadInst* load, PointerDetector* pointerDetector = nullptr);
+        llvm::DenseSet<llvm::Value*> findDefsForExtractValue(llvm::ExtractValueInst* extractValue);
     };
 
     using Result = RDSInfo;

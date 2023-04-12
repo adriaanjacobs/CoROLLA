@@ -413,7 +413,7 @@ void PointerDetector::mark_actual_vs_formal_args(llvm::Module& module) {
 
     BTW, not all pointer modifications are top-level: atomicrmw 
 */
-PointerDetector::Detector(llvm::Module& module, llvm::ModuleAnalysisManager &MAM) :
+PointerDetector::PointerDetector(llvm::Module& module, llvm::ModuleAnalysisManager &MAM) :
     module{module}, MAM{MAM}
 {
     identify_start_pointers(module);
@@ -549,8 +549,14 @@ void PointerDetector::mark_pointer_origins(llvm::Value* pointer) {
             current = freeze->getOperand(0);
             toMark.push_back({current, POINTER});
         } else if (auto loadInst = llvm::dyn_cast<llvm::LoadInst>(current)) {
-            done = true;
-            break;
+            auto& rds = MAM.getResult<ReachingDefinitionsAnalysis>(module);
+            if (auto def = rds.findDefForLoad(loadInst, this)) {
+                current = def;
+                toMark.push_back({def, POINTER});
+            } else {
+                done = true;
+                break;
+            }
         } else if (auto binaryOp = llvm::dyn_cast<llvm::BinaryOperator>(current)) {
             auto ret = mark_binaryOp_origins(binaryOp, toMark);
             if (ret.has_value())
