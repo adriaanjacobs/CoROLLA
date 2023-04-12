@@ -1,66 +1,31 @@
 #pragma once
 
-#include "attestation/attestinstrument.h"
-#include "svfpass/svfpass.h"
-#include <bitset>
-#include <llvm/Support/raw_ostream.h>
-#include <optional>
-#include <functional>
+#include <util.h>
+#include <attestation/attestinstrument.h>
+#include <svfpass/svfpass.h>
+#include <svfpass/BreakConstantExpr.h>
+#include <pointerdetection/pointerdetection.h>
 
-#include <llvm/ADT/APInt.h>
-#include <llvm/ADT/ArrayRef.h>
-#include <llvm/ADT/DenseMap.h>
 #include <llvm/Pass.h>
-#include <llvm/IR/PassManager.h>
-#include <llvm/IR/Instructions.h>
 #include <llvm/IR/IRPrintingPasses.h>
-
-#include <llvm/Analysis/ProfileSummaryInfo.h>
-#include <llvm/Analysis/AliasAnalysis.h>
-#include <llvm/Analysis/AssumptionCache.h>
-#include <llvm/Analysis/InlineCost.h>
-#include <llvm/Analysis/TargetLibraryInfo.h>
-#include <llvm/Analysis/BlockFrequencyInfo.h>
-#include <llvm/Analysis/BranchProbabilityInfo.h>
-#include <llvm/Analysis/PostDominators.h>
-#include <llvm/Analysis/InlineAdvisor.h>
-#include <llvm/Analysis/MemorySSA.h>
-#include <llvm/Analysis/ScalarEvolution.h>
-
-#include <llvm/Transforms/InstCombine/InstCombine.h>
-#include <llvm/Transforms/Utils/LCSSA.h>
-#include <llvm/Transforms/Scalar/LoopRotation.h>
-#include <llvm/Transforms/Scalar/LoopDeletion.h>
-#include <llvm/Transforms/Scalar/LoopDistribute.h>
-#include <llvm/Transforms/Scalar/LoopFlatten.h>
-#include <llvm/Transforms/Scalar/IndVarSimplify.h>
-#include <llvm/Transforms/Scalar/SimpleLoopUnswitch.h>
-#include <llvm/Transforms/Utils/LoopSimplify.h>
-#include <llvm/Transforms/Utils/SimplifyIndVar.h>
-#include <llvm/Transforms/Utils/Mem2Reg.h>
-#include <llvm/Transforms/Utils/UnifyFunctionExitNodes.h>
+#include <llvm/IR/Verifier.h>
 #include <llvm/Transforms/IPO/AlwaysInliner.h>
 #include <llvm/Transforms/IPO/FunctionAttrs.h>
 #include <llvm/Transforms/IPO/InferFunctionAttrs.h>
-#include <llvm/Transforms/Scalar/LoopPassManager.h>
 #include <llvm/Transforms/Scalar/DCE.h>
-#include <llvm/Transforms/Scalar/SimplifyCFG.h>
-#include <llvm/Transforms/Scalar/LoopInstSimplify.h>
-#include "llvm/Analysis/CGSCCPassManager.h"
-#include "llvm/Transforms/Scalar/IndVarSimplify.h"
 #include <llvm/Transforms/Scalar/LICM.h>
-#include <llvm/Transforms/Scalar/DCE.h>
-#include <llvm/Transforms/Scalar/LoopPassManager.h>
-#include <llvm/Transforms/InstCombine/InstCombine.h>
-#include <llvm/Transforms/IPO/ArgumentPromotion.h>
-#include <llvm/Transforms/Utils/FixIrreducible.h>
-#include <llvm/Transforms/Utils/UnifyLoopExits.h>
+#include <llvm/Transforms/Scalar/IndVarSimplify.h>
+#include <llvm/Transforms/Scalar/LoopDeletion.h>
+#include <llvm/Transforms/Scalar/LoopRotation.h>
+#include <llvm/Transforms/Scalar/LoopFlatten.h>
+#include <llvm/Transforms/Scalar/SimpleLoopUnswitch.h>
+#include <llvm/Transforms/Scalar/SimplifyCFG.h>
+#include <llvm/Transforms/Utils/Mem2Reg.h>
 
-#include <llvm/IR/Verifier.h>
-
-#include <svfpass/BreakConstantExpr.h>
+#include <bitset>
 #include <system_error>
-#include <util.h>
+#include <optional>
+#include <functional>
 
 #include <Util/ExtAPI.h>
 
@@ -119,9 +84,6 @@ public:
         bool isInBounds(llvm::Value* offsetPtr, llvm::APInt offset = llvm::APInt{64,0});
 
         bool isInRange_nonCached(llvm::Value* offsetPtr, llvm::APInt offset, const std::function<std::optional<bool>(llvm::Value*, llvm::APInt, DIRECTION)>& isInRange);
-
-        std::optional<llvm::APInt> findConstantOffset(llvm::GEPOperator* gep);
-        std::optional<llvm::APInt> findConstantOffset(llvm::BinaryOperator* binaryOp);
 
         void printBailStats();
 
@@ -267,12 +229,21 @@ public:
         Detector(llvm::Module& module, llvm::ModuleAnalysisManager& MAM);
         
         static bool isStaticAllocationSite(llvm::Value* val);
+        static bool isBuiltInAllocationCall(llvm::Instruction* inst) {
+            if (isStaticAllocationSite(inst))
+                return true;
+            else if (auto callInst = llvm::dyn_cast<llvm::CallBase>(inst)) {
+                if (callInst->getCalledFunction() && isKnownLibcAllocator(callInst->getCalledFunction()))
+                    return true;
+            }
+            return false;
+        }
     private:
         llvm::Module& module;
         llvm::ModuleAnalysisManager& MAM;
+        PointerDetector& pointerDetector;
         llvm::DenseMap<llvm::Function*, AllocWrapperInfo> allocFuncs;
 
-        llvm::APInt findMinimumUnsignedValue(llvm::Value* val, llvm::Function* context);
         llvm::APInt findMmapSize(llvm::CallBase* callInst);
         llvm::APInt sizeOfReturnedPointeeType(llvm::CallBase* callInst);
         enum struct AllocSiteStatus { NONE, NULLPTR, ALLOCSITE };
@@ -290,7 +261,7 @@ public:
     using Result = Detector;
 
     // Analyze the bitcode/IR in the given LLVM module.
-    Result run(llvm::Module &M, [[maybe_unused]] llvm::ModuleAnalysisManager &MAM);
+    Result run(llvm::Module &M, llvm::ModuleAnalysisManager &MAM);
 };
 
 using AllocWrapperDetector = AllocWrapperAnalysis::Detector;

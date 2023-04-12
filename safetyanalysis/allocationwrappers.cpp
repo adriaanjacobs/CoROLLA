@@ -1,6 +1,5 @@
 #include "pass.h"
 #include <util.h>
-#include <pointerdetection/pointerdetection.h>
 #include <reachability/reachingdefinitions.h>
 
 #include <llvm/IR/Constants.h>
@@ -45,17 +44,6 @@ bool AllocWrapperDetector::isBuiltInAllocationSite(llvm::Value* val) {
     }
     assert(!isDynamicAllocationSite(val));
     return isAllocationSite(val);
-}
-
-llvm::APInt AllocWrapperDetector::findMinimumUnsignedValue(llvm::Value* val, llvm::Function* context) {
-    if (auto constantInt = llvm::dyn_cast<llvm::ConstantInt>(val)) {
-        return constantInt->getValue();
-    } else {
-        assert(context);
-        auto& scev = getFAM(module, MAM).getResult<llvm::ScalarEvolutionAnalysis>(*context);
-        auto sizeScev = scev.getSCEV(val);
-        return scev.getUnsignedRangeMin(sizeScev);
-    }
 }
 
 std::optional<llvm::APInt> AllocWrapperDetector::findMinimumAllocSize(llvm::Value* allocInstr) {
@@ -233,7 +221,7 @@ std::optional<SVF::ExtAPI::extType> AllocWrapperDetector::deriveExtFnTy(llvm::Va
 }
 
 AllocWrapperDetector::Detector(llvm::Module& module, llvm::ModuleAnalysisManager& MAM) :
-    module{module}, MAM{MAM}
+    module{module}, MAM{MAM}, pointerDetector{MAM.getResult<PointerDetectionAnalysis>(module)}
 {
     auto& dataLayout = module.getDataLayout();
     auto& context = module.getContext();
@@ -355,7 +343,7 @@ AllocWrapperAnalysis::Result AllocWrapperAnalysis::run(llvm::Module& module, llv
 llvm::AnalysisKey AllocWrapperAnalysis::Key;
 
 llvm::APInt AllocWrapperDetector::findMmapSize(llvm::CallBase* callInst) { // redis calls this
-    return findMinimumUnsignedValue(callInst->getArgOperand(1), callInst->getFunction());
+    return pointerDetector.findMinimumUnsignedValue(callInst->getArgOperand(1), callInst->getFunction());
 }
 
 llvm::APInt AllocWrapperDetector::sizeOfReturnedPointeeType(llvm::CallBase* callInst) {
@@ -368,17 +356,17 @@ llvm::APInt AllocWrapperDetector::sizeOfReturnedPointeeType(llvm::CallBase* call
 // Don't know if it matters, but I had a bug on __ctype_toupper_bloc. Don't want to look into it.
 const llvm::DenseMap<llvm::StringRef, std::function<llvm::APInt(AllocWrapperDetector*,llvm::CallBase*)>> AllocWrapperDetector::builtinAllocToSize = {
     {"malloc", [] (AllocWrapperDetector* self, llvm::CallBase* callInst) -> llvm::APInt {
-        return self->findMinimumUnsignedValue(callInst->getArgOperand(0), callInst->getFunction()); 
+        return self->pointerDetector.findMinimumUnsignedValue(callInst->getArgOperand(0), callInst->getFunction()); 
     }},
     {"calloc", [] (AllocWrapperDetector* self, llvm::CallBase* callInst) -> llvm::APInt {
-        auto lhOperandSize = self->findMinimumUnsignedValue(callInst->getArgOperand(0), callInst->getFunction());
-        auto rhOperandSize = self->findMinimumUnsignedValue(callInst->getArgOperand(1), callInst->getFunction());
+        auto lhOperandSize = self->pointerDetector.findMinimumUnsignedValue(callInst->getArgOperand(0), callInst->getFunction());
+        auto rhOperandSize = self->pointerDetector.findMinimumUnsignedValue(callInst->getArgOperand(1), callInst->getFunction());
         auto result = lhOperandSize * rhOperandSize;
         assert(result.getBitWidth() <= 64);
         return result;
     }},
     {"realloc", [] (AllocWrapperDetector* self, llvm::CallBase* callInst) -> llvm::APInt {
-        return self->findMinimumUnsignedValue(callInst->getArgOperand(1), callInst->getFunction());
+        return self->pointerDetector.findMinimumUnsignedValue(callInst->getArgOperand(1), callInst->getFunction());
     }},
     {"__errno_location", [] (AllocWrapperDetector* self, llvm::CallBase* callInst) -> llvm::APInt {
         return self->sizeOfReturnedPointeeType(callInst);

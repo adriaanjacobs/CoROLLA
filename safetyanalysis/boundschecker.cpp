@@ -590,64 +590,6 @@ bool BoundsChecker::isInBounds_internal(llvm::Value* offsetPtr, llvm::APInt offs
     assert(!"Unreachable!");
 }
 
-std::optional<llvm::APInt> BoundsChecker::findConstantOffset(llvm::GEPOperator* gep) {
-    llvm::APInt offset(64, 0);
-    if (gep->hasAllConstantIndices()) {
-        for (auto& idxuse : gep->indices())
-            assert(llvm::isa<llvm::ConstantInt>(idxuse.get()));
-        bool val = gep->accumulateConstantOffset(module.getDataLayout(), offset);
-        assert(val);
-        return offset;
-    } else if (auto gepInst = llvm::dyn_cast<llvm::GetElementPtrInst>(gep)) {
-        auto& scev = getFAM(module, MAM).getResult<llvm::ScalarEvolutionAnalysis>(*gepInst->getFunction());
-        auto gepScev = scev.getSCEV(gepInst);
-        auto offsetScev = scev.getMinusSCEV(gepScev,scev.getSCEV(gep->getPointerOperand()));
-        auto single = scev.getSignedRange(offsetScev).getSingleElement();
-        if (single)
-            return *single;
-        else return std::nullopt;
-    } else HANDLE_UNKOWN_VALUE(gep);
-}
-
-std::optional<llvm::APInt> BoundsChecker::findConstantOffset(llvm::BinaryOperator* binaryOp) {
-    if (binaryOp->getOpcode() != llvm::Instruction::Add || binaryOp->getOpcode() != llvm::Instruction::Sub)
-        return std::nullopt;
-
-    bool isAdd = binaryOp->getOpcode() == llvm::Instruction::Add;
-    if (!isAdd) {
-        if (binaryOp->getOpcode() != llvm::Instruction::Sub)
-            return std::nullopt;
-        assert(binaryOp->getOpcode() == llvm::Instruction::Sub);
-    }
-
-    auto& dataLayout = module.getDataLayout();
-    llvm::APInt offset(64, 0);
-
-    assert(binaryOp->getNumOperands() == 2);
-    auto lhs = binaryOp->getOperand(0);
-    auto rhs = binaryOp->getOperand(1);
-
-    auto& pointerDetector = MAM.getResult<PointerDetectionAnalysis>(module);
-    // this has to be a pointer value, but not necessarily a confirmed one
-    auto bValTypes = pointerDetector.findBinaryOpValueTypes(binaryOp);
-
-    if (bValTypes.has_value()) {
-        if (auto constInt = llvm::dyn_cast<llvm::ConstantInt>(bValTypes->nonPointerOperand)) {
-            if (isAdd)
-                return constInt->getValue();
-            else 
-                return -constInt->getValue();
-        } else {
-            auto& scev = getFAM(module, MAM).getResult<llvm::ScalarEvolutionAnalysis>(*binaryOp->getFunction());
-            if (auto single = scev.getSignedRange(scev.getSCEV(bValTypes->nonPointerOperand)).getSingleElement())
-                return *single;
-            else return std::nullopt;
-        }
-    }
-
-    return std::nullopt;
-}
-
 IsInBoundsAnalysis::Result IsInBoundsAnalysis::run(llvm::Module &module, llvm::ModuleAnalysisManager &MAM) {
     return BoundsChecker(module, MAM);
 }

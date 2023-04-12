@@ -30,7 +30,7 @@ void PointerDetector::identify_start_pointers(llvm::Module& module) {
     for (auto& func : module) {
         for (auto& bb : func) {
             for (auto& inst : bb) {
-                if (isBuiltInAllocationCall(&inst))
+                if (AllocWrapperDetector::isBuiltInAllocationCall(&inst))
                     mark_value(&inst, POINTER);
 
                 if (inst.mayReadOrWriteMemory()) {
@@ -66,21 +66,88 @@ void PointerDetector::identify_start_pointers(llvm::Module& module) {
     llvm::outs() << pointers.size() << " start pointers identified.\n";
 }
 
+llvm::APInt PointerDetector::findMinimumUnsignedValue(llvm::Value* val, llvm::Function* context) const {
+    if (auto constantInt = llvm::dyn_cast<llvm::ConstantInt>(val)) {
+        return constantInt->getValue();
+    } else {
+        assert(context);
+        auto& scev = getFAM(module, MAM).getResult<llvm::ScalarEvolutionAnalysis>(*context);
+        auto sizeScev = scev.getSCEV(val);
+        return scev.getUnsignedRangeMin(sizeScev);
+    }
+}
+
+std::optional<llvm::APInt> PointerDetector::findConstantOffset(llvm::GEPOperator* gep) const {
+    llvm::APInt offset(64, 0);
+    if (gep->hasAllConstantIndices()) {
+        for (auto& idxuse : gep->indices())
+            assert(llvm::isa<llvm::ConstantInt>(idxuse.get()));
+        bool val = gep->accumulateConstantOffset(module.getDataLayout(), offset);
+        assert(val);
+        return offset;
+    } else if (auto gepInst = llvm::dyn_cast<llvm::GetElementPtrInst>(gep)) {
+        auto& scev = getFAM(module, MAM).getResult<llvm::ScalarEvolutionAnalysis>(*gepInst->getFunction());
+        auto gepScev = scev.getSCEV(gepInst);
+        auto offsetScev = scev.getMinusSCEV(gepScev,scev.getSCEV(gep->getPointerOperand()));
+        auto single = scev.getSignedRange(offsetScev).getSingleElement();
+        if (single)
+            return *single;
+        else return std::nullopt;
+    } else HANDLE_UNKOWN_VALUE(gep);
+}
+
+std::optional<llvm::APInt> PointerDetector::findConstantOffset(llvm::BinaryOperator* binaryOp) const {
+    if (binaryOp->getOpcode() != llvm::Instruction::Add || binaryOp->getOpcode() != llvm::Instruction::Sub)
+        return std::nullopt;
+
+    bool isAdd = binaryOp->getOpcode() == llvm::Instruction::Add;
+    if (!isAdd) {
+        if (binaryOp->getOpcode() != llvm::Instruction::Sub)
+            return std::nullopt;
+        assert(binaryOp->getOpcode() == llvm::Instruction::Sub);
+    }
+
+    auto& dataLayout = module.getDataLayout();
+    llvm::APInt offset(64, 0);
+
+    assert(binaryOp->getNumOperands() == 2);
+    auto lhs = binaryOp->getOperand(0);
+    auto rhs = binaryOp->getOperand(1);
+
+    // this has to be a pointer value, but not necessarily a confirmed one
+    auto bValTypes = findBinaryOpValueTypes(binaryOp);
+
+    if (bValTypes.has_value()) {
+        if (auto constInt = llvm::dyn_cast<llvm::ConstantInt>(bValTypes->nonPointerOperand)) {
+            if (isAdd)
+                return constInt->getValue();
+            else 
+                return -constInt->getValue();
+        } else {
+            auto& scev = getFAM(module, MAM).getResult<llvm::ScalarEvolutionAnalysis>(*binaryOp->getFunction());
+            if (auto single = scev.getSignedRange(scev.getSCEV(bValTypes->nonPointerOperand)).getSingleElement())
+                return *single;
+            else return std::nullopt;
+        }
+    }
+
+    return std::nullopt;
+}
+
 llvm::Value* PointerDetector::strip_pointer_casts(llvm::Value *pointer) const {
     const auto& dataLayout = module.getDataLayout();
-    auto& boundsChecker = MAM.getResult<IsInBoundsAnalysis>(module);
 
     while (true) {
         // ASSERT_ELSE_UNKOWN(is_confirmed_pointer(pointer), pointer);
 
         if (auto gep = llvm::dyn_cast<llvm::GEPOperator>(pointer)) {
             auto operand = gep->getPointerOperand();
-            auto offset = boundsChecker.findConstantOffset(gep);
+            auto offset = findConstantOffset(gep);
             if (offset.has_value() && offset->isNullValue()) {
                 pointer = operand;
             } else break;
         } else if (auto binaryOp = llvm::dyn_cast<llvm::BinaryOperator>(pointer)) {
-            auto offset = boundsChecker.findConstantOffset(binaryOp);
+            auto offset = findConstantOffset(binaryOp);
             if (offset.has_value() && offset->isNullValue()) {
                 auto operandTypes = findBinaryOpValueTypes(binaryOp);
                 assert(operandTypes.has_value());
@@ -120,7 +187,6 @@ llvm::Value* PointerDetector::strip_pointer_casts(llvm::Value *pointer) const {
 llvm::Value* PointerDetector::find_real_base(llvm::Value *arithmetic) const {
     static thread_local std::vector<const llvm::Value*> passedInstrs;
     const auto size = passedInstrs.size();
-    // llvm::outs() << rand() << ": Called findoffset (nested level: " << size << ")\n";
     run_on_destruct resetPassedInstrs([&](){
         assert(size <= passedInstrs.size());
         passedInstrs.erase(passedInstrs.begin() + size, passedInstrs.end());
@@ -517,13 +583,15 @@ void PointerDetector::mark_pointer_origins(llvm::Value* pointer) {
             }
             done = true;
             break;
+        } else if (auto extractValue = llvm::dyn_cast<llvm::ExtractValueInst>(current)) {
+            done = true;
+            break;
         } else if (AllocWrapperDetector::isStaticAllocationSite(current)
                     || llvm::isa<llvm::CallBase>(current)
                     || llvm::isa<llvm::Argument>(current)
                     || llvm::isa<llvm::ConstantAggregate>(current)
                     || llvm::isa<llvm::ConstantPointerNull>(current)
                     || llvm::isa<llvm::ExtractElementInst>(current)
-                    || llvm::isa<llvm::ExtractValueInst>(current)
                     || llvm::isa<llvm::UndefValue>(current)
         ) {
             done = true;

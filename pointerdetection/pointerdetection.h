@@ -8,7 +8,6 @@
 #include <llvm/IR/Operator.h>
 #include <llvm/Support/Casting.h>
 #include <optional>
-#include <safetyanalysis/pass.h>
 #include <llvm/Analysis/LazyBlockFrequencyInfo.h>
 #include <llvm/Analysis/BasicAliasAnalysis.h>
 
@@ -54,7 +53,6 @@ public:
             llvm::Value* pointerOperand;
             llvm::Value* nonPointerOperand;
         };
-
         std::optional<BinaryOpValueTypes> findBinaryOpValueTypes(llvm::BinaryOperator* binaryOp) const;
 
         struct CallSiteInfo {
@@ -63,6 +61,10 @@ public:
         };
         const CallSiteInfo& getCallSiteInfo(llvm::Function* function) const;
         bool getIncomingValuesForArgument(llvm::Argument* argument, llvm::DenseSet<llvm::Value*>& incomingVals) const;
+
+        llvm::APInt findMinimumUnsignedValue(llvm::Value* val, llvm::Function* context) const;
+        std::optional<llvm::APInt> findConstantOffset(llvm::GEPOperator* gep) const;
+        std::optional<llvm::APInt> findConstantOffset(llvm::BinaryOperator* binaryOp) const;
 
         Detector(llvm::Module &M, llvm::ModuleAnalysisManager &MAM);
         
@@ -80,16 +82,6 @@ public:
         void mark_pointer_uses(llvm::Value* pointer);
         void mark_actual_vs_formal_args(llvm::Module& module);
         void mark_value(llvm::Value*, ValueType status);
-
-        static bool isBuiltInAllocationCall(llvm::Instruction* inst) {
-            if (AllocWrapperDetector::isStaticAllocationSite(inst))
-                return true;
-            else if (auto callInst = llvm::dyn_cast<llvm::CallBase>(inst)) {
-                if (callInst->getCalledFunction() && AllocWrapperDetector::isKnownLibcAllocator(callInst->getCalledFunction()))
-                    return true;
-            }
-            return false;
-        }
     };
 
     explicit PointerDetectionAnalysis() = default;
