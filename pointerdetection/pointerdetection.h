@@ -46,6 +46,7 @@ public:
         bool is_confirmed_pointer(llvm::Value* val) const { return pointers.contains(val); }
         std::optional<ValueType> is_unconfirmed_pointer(llvm::Value* val) const;
         llvm::Value* strip_pointer_casts(llvm::Value* pointer) const;
+        llvm::Value* find_real_base(llvm::Value *arithmetic) const;
         template<typename T>
         std::optional<ValueType> handle_unconfirmed_binaryOp(T* binaryOp) const;
 

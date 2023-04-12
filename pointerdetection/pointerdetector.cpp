@@ -117,6 +117,120 @@ llvm::Value* PointerDetector::strip_pointer_casts(llvm::Value *pointer) const {
     return pointer;
 }
 
+llvm::Value* PointerDetector::find_real_base(llvm::Value *arithmetic) const {
+    static thread_local std::vector<const llvm::Value*> passedInstrs;
+    const auto size = passedInstrs.size();
+    // llvm::outs() << rand() << ": Called findoffset (nested level: " << size << ")\n";
+    run_on_destruct resetPassedInstrs([&](){
+        assert(size <= passedInstrs.size());
+        passedInstrs.erase(passedInstrs.begin() + size, passedInstrs.end());
+    });
+
+    if (llvm::is_contained(passedInstrs, arithmetic))
+        return arithmetic;
+
+    auto current = arithmetic;
+    bool done = false;
+    const auto& dataLayout = module.getDataLayout();
+    auto& allocDetector = MAM.getResult<AllocWrapperAnalysis>(module);
+    auto& pointerDetector = MAM.getResult<PointerDetectionAnalysis>(module);
+
+    while (!done) {
+        assert(current);
+        auto oldCurrent = current;
+        passedInstrs.push_back(current);
+        if (auto gepInst = llvm::dyn_cast<llvm::GetElementPtrInst>(current)) {
+            current = gepInst->getPointerOperand();
+        } else if (auto gepOperator = llvm::dyn_cast<llvm::GEPOperator>(current)) {
+            current = gepOperator->getPointerOperand();
+        } else if (auto binaryOp = llvm::dyn_cast<llvm::BinaryOperator>(current)) {
+            auto binOpTypes = pointerDetector.findBinaryOpValueTypes(binaryOp);
+            if (!binOpTypes.has_value()) 
+                done = true;
+            else 
+                current = binOpTypes->pointerOperand;
+        } else if (auto castInst = llvm::dyn_cast<llvm::CastInst>(current)) {
+            switch (castInst->getOpcode()) {
+                case llvm::Instruction::CastOps::IntToPtr:
+                case llvm::Instruction::CastOps::PtrToInt:
+                    assert(castInst->isNoopCast(dataLayout));
+                [[fallthrough]];
+                case llvm::Instruction::CastOps::BitCast: {
+                    current = castInst->getOperand(0);
+                } break;
+                default:
+                    HANDLE_UNKOWN_VALUE(castInst);
+            }
+        } else if (auto bitcastOp = llvm::dyn_cast<llvm::BitCastOperator>(current)) {
+            current = bitcastOp->getOperand(0);
+        } else if (auto phiNode = llvm::dyn_cast<llvm::PHINode>(current)) {
+            auto& FAM = getFAM(module, MAM);
+            auto& loopInfo = FAM.getResult<llvm::LoopAnalysis>(*phiNode->getFunction());
+            auto& scev = FAM.getResult<llvm::ScalarEvolutionAnalysis>(*phiNode->getFunction());
+            auto& domTree = FAM.getResult<llvm::DominatorTreeAnalysis>(*phiNode->getFunction());
+            if (auto constVal = phiNode->hasConstantValue()) {
+                if (!domTree.dominates(constVal, phiNode)) {
+                    llvm::outs() << "phiNode: " << *phiNode << "\n";
+                    llvm::outs() << "constPhi: " << *constVal << "\n";
+                }
+                assert(domTree.dominates(constVal, phiNode));
+                current = constVal;
+            } else if (auto loop = loopInfo.getLoopFor(phiNode->getParent()); loop && loop->isAuxiliaryInductionVariable(*phiNode, scev)) {
+                // alternative to below: get replacement expr for phinode, remove steps
+                // getValue()
+
+                int nonLoopIncomingBlockIdx = -1;
+                for (uint i = 0; i < phiNode->getNumIncomingValues(); i++) {
+                    auto incmngBlock = phiNode->getIncomingBlock(i);
+                    if (!loop->contains(incmngBlock)) {
+                        assert(nonLoopIncomingBlockIdx == -1);
+                        nonLoopIncomingBlockIdx = i;
+                    }
+                }
+                assert(nonLoopIncomingBlockIdx != -1);
+                llvm::outs() << "We did it!!!!\n";
+                current = phiNode->getIncomingValue(nonLoopIncomingBlockIdx);
+            } else { // fallback case
+                // here, if the result of find_real_base is the same as phiNode, we can ignore that incomingVal, it's cool
+                auto commonbase = find_real_base(phiNode->getIncomingValue(0));
+                for (uint i = 1; i < phiNode->getNumIncomingValues(); i++) {
+                    if (commonbase != find_real_base(phiNode->getIncomingValue(i))) {
+                        done = true;
+                        break;
+                    }
+                }
+                
+                if (!done) 
+                    current = commonbase;
+            }
+        } else if (auto selectInst = llvm::dyn_cast<llvm::SelectInst>(current)) {
+            auto commonbase = find_real_base(selectInst->getTrueValue());
+            if (commonbase != find_real_base(selectInst->getFalseValue()))
+                done = true;
+            else 
+                current = commonbase;
+        } else if (allocDetector.isBuiltInAllocationSite(current) || isaSafePointerSourceType(current) 
+                    || llvm::isa<llvm::ConstantPointerNull, llvm::UndefValue>(current)
+        ) {
+            done = true;
+        } else if (auto constantInt = llvm::dyn_cast<llvm::ConstantInt>(current)) {
+            ASSERT_ELSE_UNKOWN(constantInt->isZero(), current);
+            done = true;
+        } else if (auto freeze = llvm::dyn_cast<llvm::FreezeInst>(current)) {
+            // if the below fires, i think we can assume it's a safe pointer
+            ASSERT_ELSE_UNKOWN(!(llvm::isa<llvm::UndefValue, llvm::PoisonValue>(freeze->getOperand(0))), current);
+            current = freeze->getOperand(0);
+        } else {
+            HANDLE_UNKOWN_VALUE(current);
+        }
+
+        if (oldCurrent == current)
+            assert(done);
+    }
+
+    return current;
+}
+
 void PointerDetector::mark_actual_vs_formal_args(llvm::Module& module) {
     struct ArgDesc {
         bool isPointer;
