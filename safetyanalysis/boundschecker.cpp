@@ -380,10 +380,17 @@ bool BoundsChecker::isInBounds_internal(llvm::Value* offsetPtr, llvm::APInt offs
                 return defOrClobberIsInBounds(localDep);
             }
             assert(false);
-        } else if (llvm::isa<llvm::UndefValue, llvm::ExtractValueInst, llvm::ExtractElementInst>(current)) {
-            // treat undefvalues as loadinsts (value cannot be determined)
-            // to keep following LoadInsts i would need to alias analyze the operand here
-            // that's not a problem, but then it spawns a whole tree of possibilities to check
+        } else if (auto extractValue = llvm::dyn_cast<llvm::ExtractValueInst>(current)) {
+            auto& rds = MAM.getResult<ReachingDefinitionsAnalysis>(module);
+            auto defs = rds.findDefsForExtractValue(extractValue);
+            if (defs.empty())
+                return false;
+
+            for (auto def : defs)
+                if (!isInBounds_internal<DIR>(def, offset, isInRange))
+                    return false;
+            return true;
+        } else if (llvm::isa<llvm::UndefValue, llvm::ExtractElementInst>(current)) {
             return false;
         } else if (llvm::isa<llvm::BitCastInst>(current)) {
             auto castInst = llvm::cast<llvm::CastInst>(current);

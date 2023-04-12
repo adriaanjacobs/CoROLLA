@@ -61,12 +61,6 @@ public:
 
 using OffsetFinder = OffsetFinderAnalysis::Finder;
 
-static llvm::StringRef scevTypeString[] = {
-    "scConstant", "scTruncate", "scZeroExtend", "scSignExtend", "scAddExpr", "scMulExpr",
-    "scUDivExpr", "scAddRecExpr", "scUMaxExpr", "scSMaxExpr", "scUMinExpr", "scSMinExpr",
-    "scPtrToInt", "scUnknown", "scCouldNotCompute"
-};
-
 //===----------------------------------------------------------------------===//
 /// This class implements an LLVM module analysis pass.
 ///

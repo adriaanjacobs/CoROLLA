@@ -2,16 +2,14 @@
 
 #include <util.h>
 #include <safetyanalysis/pass.h>
-
+#include <reachability/reachingdefinitions.h>
 
 #include <llvm/IR/Constants.h>
 #include <llvm/IR/Instructions.h>
 #include <llvm/IR/Constants.h>
 
-
 #include <bit>
 #include <bitset>
-
 #include <cstdint>
 #include <array>
 #include <experimental/array>
@@ -170,8 +168,9 @@ llvm::Value* PointerDetector::strip_pointer_casts(llvm::Value *pointer) const {
         } else if (auto freeze = llvm::dyn_cast<llvm::FreezeInst>(pointer)) {
             assert((!llvm::isa<llvm::UndefValue, llvm::PoisonValue>(freeze->getOperand(0))));
             pointer = freeze->getOperand(0);
-        } else if (AllocWrapperDetector::isStaticAllocationSite(pointer) || isaSafePointerSourceType(pointer)
-                    || llvm::isa<llvm::ConstantPointerNull, llvm::ConstantInt, llvm::Function>(pointer)
+        } else if (AllocWrapperDetector::isStaticAllocationSite(pointer)
+                    || llvm::isa<llvm::ConstantPointerNull, llvm::ConstantInt, llvm::Function, llvm::LoadInst, 
+                                llvm::ExtractElementInst, llvm::Argument, llvm::CallBase, llvm::PHINode, llvm::SelectInst>(pointer)
         ) {
             break;
         } else if (auto constExpr = llvm::dyn_cast<llvm::ConstantExpr>(pointer)) {
@@ -199,7 +198,6 @@ llvm::Value* PointerDetector::find_real_base(llvm::Value *arithmetic) const {
     bool done = false;
     const auto& dataLayout = module.getDataLayout();
     auto& allocDetector = MAM.getResult<AllocWrapperAnalysis>(module);
-    auto& pointerDetector = MAM.getResult<PointerDetectionAnalysis>(module);
 
     while (!done) {
         assert(current);
@@ -210,7 +208,7 @@ llvm::Value* PointerDetector::find_real_base(llvm::Value *arithmetic) const {
         } else if (auto gepOperator = llvm::dyn_cast<llvm::GEPOperator>(current)) {
             current = gepOperator->getPointerOperand();
         } else if (auto binaryOp = llvm::dyn_cast<llvm::BinaryOperator>(current)) {
-            auto binOpTypes = pointerDetector.findBinaryOpValueTypes(binaryOp);
+            auto binOpTypes = findBinaryOpValueTypes(binaryOp);
             if (!binOpTypes.has_value()) 
                 done = true;
             else 
@@ -275,8 +273,9 @@ llvm::Value* PointerDetector::find_real_base(llvm::Value *arithmetic) const {
                 done = true;
             else 
                 current = commonbase;
-        } else if (allocDetector.isBuiltInAllocationSite(current) || isaSafePointerSourceType(current) 
-                    || llvm::isa<llvm::ConstantPointerNull, llvm::UndefValue>(current)
+        } else if (allocDetector.isBuiltInAllocationSite(current) 
+                    || llvm::isa<llvm::ConstantPointerNull, llvm::UndefValue, llvm::LoadInst, llvm::ExtractValueInst,
+                                llvm::ExtractElementInst, llvm::Argument, llvm::CallBase, llvm::PHINode, llvm::SelectInst>(current)
         ) {
             done = true;
         } else if (auto constantInt = llvm::dyn_cast<llvm::ConstantInt>(current)) {
@@ -584,6 +583,10 @@ void PointerDetector::mark_pointer_origins(llvm::Value* pointer) {
             done = true;
             break;
         } else if (auto extractValue = llvm::dyn_cast<llvm::ExtractValueInst>(current)) {
+            auto& rds = MAM.getResult<ReachingDefinitionsAnalysis>(module);
+            auto defs = rds.findDefsForExtractValue(extractValue);
+            for (auto def : defs) // transparently handles defs.empty()
+                toMark.push_back({def, POINTER});
             done = true;
             break;
         } else if (AllocWrapperDetector::isStaticAllocationSite(current)
@@ -1115,8 +1118,6 @@ std::optional<PointerDetector::ValueType> PointerDetector::is_unconfirmed_pointe
                 ASSERT_ELSE_UNKOWN(optionA.value() == optionB.value(), selectInst);
                 return optionA.value();
             } else return std::nullopt;
-        } else if (auto gepInst = llvm::dyn_cast<llvm::GetElementPtrInst>(current)) {
-            current = gepInst->getPointerOperand();
         } else if (auto gepOperator = llvm::dyn_cast<llvm::GEPOperator>(current)) {
             current = gepOperator->getPointerOperand();
         } else if (llvm::isa<llvm::LoadInst, llvm::CallBase, llvm::ExtractElementInst, llvm::ExtractValueInst>(current)) {

@@ -185,10 +185,6 @@ namespace llvm {
     };
 }
 
-inline bool isaSafePointerSourceType(llvm::Value* val) {
-    return llvm::isa<llvm::LoadInst, llvm::ExtractValueInst, llvm::ExtractElementInst, llvm::Argument,llvm::CallBase,llvm::PHINode,llvm::SelectInst>(val);
-}
-
 namespace std {
     template<typename T>
     struct hash<llvm::DenseSet<T>> {
