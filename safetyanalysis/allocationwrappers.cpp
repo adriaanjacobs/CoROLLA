@@ -46,6 +46,20 @@ bool AllocWrapperDetector::isBuiltInAllocationSite(llvm::Value* val) {
     return isAllocationSite(val);
 }
 
+llvm::StringRef AllocWrapperDetector::getValueDescription(llvm::Value* val) {
+    if (isBuiltInAllocationSite(val)) {
+        return "allocation site";
+    } else if (auto inst = llvm::dyn_cast<llvm::Instruction>(val)) {
+        return inst->getOpcodeName();
+    } else if (auto arg = llvm::dyn_cast<llvm::Argument>(val)) {
+        return "function argument";
+    } else if (llvm::isa<llvm::ConstantPointerNull, llvm::ConstantInt>(val)) {
+        return "constant pointer value";
+    } else if (llvm::isa<llvm::UndefValue>(val)) {
+        return "undef value";
+    } else HANDLE_UNKOWN_VALUE(val);
+}
+
 std::optional<llvm::APInt> AllocWrapperDetector::findMinimumAllocSize(llvm::Value* allocInstr) {
     ASSERT_ELSE_UNKOWN(isBuiltInAllocationSite(allocInstr), allocInstr);
     auto& dataLayout = module.getDataLayout();

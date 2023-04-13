@@ -15,19 +15,6 @@
 
 llvm::AnalysisKey IsInBoundsAnalysis::Key;
 
-llvm::StringRef BoundsChecker::getDeciderDescription(llvm::Value* val) {
-    auto& allocDetector = MAM.getResult<AllocWrapperAnalysis>(module);
-    if (allocDetector.isBuiltInAllocationSite(val)) {
-        return "allocation site";
-    } else if (auto inst = llvm::dyn_cast<llvm::Instruction>(val)) {
-        return inst->getOpcodeName();
-    } else if (auto arg = llvm::dyn_cast<llvm::Argument>(val)) {
-        return "function argument";
-    } else if (llvm::isa<llvm::ConstantPointerNull, llvm::ConstantInt>(val)) {
-        return "constant pointer value";
-    } else HANDLE_UNKOWN_VALUE(val);
-}
-
 void BoundsChecker::printBailStats() {
     auto statsCpy = bailStats;
     llvm::outs() << "Bail stats for isInBoundsAnalysis: \n";
@@ -85,7 +72,7 @@ bool BoundsChecker::isInBounds(llvm::Value* offsetPtr, llvm::APInt storeSize) {
         // }
 
         if (!inBounds)
-            bailStats[getDeciderDescription(mostRecentDecider)]++;
+            bailStats[allocDetector.getValueDescription(mostRecentDecider)]++;
         offsetIt->getSecond() = inBounds;
     }
     assert(offsetIt->getSecond().has_value());

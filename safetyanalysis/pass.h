@@ -94,8 +94,6 @@ public:
         llvm::Value* mostRecentDecider = nullptr;
         llvm::Module& module;
         llvm::ModuleAnalysisManager& MAM;
-
-        llvm::StringRef getDeciderDescription(llvm::Value* val);
     };
 
     explicit IsInBoundsAnalysis() = default;
@@ -217,6 +215,7 @@ public:
         bool isBuiltInAllocationSite(llvm::Value* val);
         bool isAllocationSite(llvm::Value* val);
         bool isDynamicAllocationSite(llvm::Value* val);
+        llvm::StringRef getValueDescription(llvm::Value* val);
 
         std::optional<llvm::APInt> findMinimumAllocSize(llvm::Value* allocInstr);
 

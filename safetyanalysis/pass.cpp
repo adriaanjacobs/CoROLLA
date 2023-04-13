@@ -4,36 +4,7 @@
 #include <pointerdetection/pointerdetection.h>
 #include <reachability/reachingdefinitions.h>
 
-#include <llvm/ADT/DenseSet.h>
-#include <llvm/IR/CFG.h>
-#include <llvm/ADT/APInt.h>
-#include <llvm/ADT/ArrayRef.h>
-#include <llvm/ADT/StringRef.h>
-#include <llvm/Analysis/InlineAdvisor.h>
-#include <llvm/Analysis/ScalarEvolutionExpressions.h>
-#include <llvm/Analysis/ValueTracking.h>
-#include <llvm/IR/Dominators.h>
-#include <llvm/IR/Instructions.h>
-#include <llvm/IR/LLVMContext.h>
-#include <llvm/IR/PassManager.h>
-#include <llvm/ADT/SmallPtrSet.h>
-#include <llvm/IR/ValueMap.h>
-#include <llvm/ADT/STLExtras.h>
-#include <llvm/ADT/SmallVector.h>
-#include <llvm/Analysis/LoopInfo.h>
-#include <llvm/Analysis/LoopAccessAnalysis.h>
-#include <llvm/Analysis/ScalarEvolution.h>
-#include <llvm/IR/Argument.h>
-#include <llvm/IR/BasicBlock.h>
-#include <llvm/IR/Constants.h>
-#include <llvm/IR/GlobalVariable.h>
-#include <llvm/IR/InstrTypes.h>
-#include <llvm/IR/Instruction.h>
-#include <llvm/IR/Metadata.h>
-#include <llvm/Support/Casting.h>
 #include <llvm/IR/IntrinsicsX86.h>
-#include <llvm/IR/PassManagerImpl.h>
-#include <llvm/IR/InlineAsm.h>
 
 #include <experimental/array>
 #include <optional>
