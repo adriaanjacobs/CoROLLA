@@ -203,9 +203,7 @@ llvm::Value* PointerDetector::find_real_base(llvm::Value *arithmetic) const {
         assert(current);
         auto oldCurrent = current;
         passedInstrs.push_back(current);
-        if (auto gepInst = llvm::dyn_cast<llvm::GetElementPtrInst>(current)) {
-            current = gepInst->getPointerOperand();
-        } else if (auto gepOperator = llvm::dyn_cast<llvm::GEPOperator>(current)) {
+        if (auto gepOperator = llvm::dyn_cast<llvm::GEPOperator>(current)) {
             current = gepOperator->getPointerOperand();
         } else if (auto binaryOp = llvm::dyn_cast<llvm::BinaryOperator>(current)) {
             auto binOpTypes = findBinaryOpValueTypes(binaryOp);
@@ -213,8 +211,17 @@ llvm::Value* PointerDetector::find_real_base(llvm::Value *arithmetic) const {
                 done = true;
             else 
                 current = binOpTypes->pointerOperand;
+        } else if (auto bitcastOp = llvm::dyn_cast<llvm::BitCastOperator>(current)) {
+            current = bitcastOp->getOperand(0);
         } else if (auto castInst = llvm::dyn_cast<llvm::CastInst>(current)) {
             switch (castInst->getOpcode()) {
+                case llvm::Instruction::FPToSI: // fuck this
+                case llvm::Instruction::FPToUI:
+                case llvm::Instruction::SExt:
+                case llvm::Instruction::ZExt:
+                    ASSERT_ELSE_UNKOWN(dataLayout.getTypeSizeInBits(castInst->getType()) == 64, castInst);
+                    done = true;
+                    break;
                 case llvm::Instruction::CastOps::IntToPtr:
                 case llvm::Instruction::CastOps::PtrToInt:
                     assert(castInst->isNoopCast(dataLayout));
@@ -222,11 +229,14 @@ llvm::Value* PointerDetector::find_real_base(llvm::Value *arithmetic) const {
                 case llvm::Instruction::CastOps::BitCast: {
                     current = castInst->getOperand(0);
                 } break;
-                default:
+                default: {
+                    llvm::outs() << "passed instructions leading up:\n";
+                    for (auto inst : passedInstrs)
+                        llvm::outs() << "\t" << *inst << "\n";
                     HANDLE_UNKOWN_VALUE(castInst);
+                }
+                    
             }
-        } else if (auto bitcastOp = llvm::dyn_cast<llvm::BitCastOperator>(current)) {
-            current = bitcastOp->getOperand(0);
         } else if (auto phiNode = llvm::dyn_cast<llvm::PHINode>(current)) {
             auto& FAM = getFAM(module, MAM);
             auto& loopInfo = FAM.getResult<llvm::LoopAnalysis>(*phiNode->getFunction());
@@ -279,12 +289,24 @@ llvm::Value* PointerDetector::find_real_base(llvm::Value *arithmetic) const {
         ) {
             done = true;
         } else if (auto constantInt = llvm::dyn_cast<llvm::ConstantInt>(current)) {
-            ASSERT_ELSE_UNKOWN(constantInt->isZero(), current);
+            ASSERT_ELSE_UNKOWN(constantInt->isZero() || constantInt->equalsInt(-1), current);
             done = true;
         } else if (auto freeze = llvm::dyn_cast<llvm::FreezeInst>(current)) {
             // if the below fires, i think we can assume it's a safe pointer
             ASSERT_ELSE_UNKOWN(!(llvm::isa<llvm::UndefValue, llvm::PoisonValue>(freeze->getOperand(0))), current);
             current = freeze->getOperand(0);
+        } else if (auto constExpr = llvm::dyn_cast<llvm::ConstantExpr>(current)) {
+            switch (constExpr->getOpcode()) {
+                case llvm::Instruction::IntToPtr:
+                case llvm::Instruction::PtrToInt:
+                    ASSERT_ELSE_UNKOWN(constExpr->getNumOperands() == 1, constExpr);
+                    ASSERT_ELSE_UNKOWN(dataLayout.getTypeSizeInBits(constExpr->getOperand(0)->getType()) == 64, constExpr);
+                    ASSERT_ELSE_UNKOWN(dataLayout.getTypeSizeInBits(constExpr->getType()) == 64, constExpr);
+                    current = constExpr->getOperand(0);
+                    break;
+                default:
+                    HANDLE_UNKOWN_VALUE(constExpr);
+            }
         } else {
             HANDLE_UNKOWN_VALUE(current);
         }
