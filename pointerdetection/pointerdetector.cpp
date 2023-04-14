@@ -86,11 +86,11 @@ std::optional<llvm::APInt> PointerDetector::findConstantOffset(llvm::GEPOperator
     } else if (auto gepInst = llvm::dyn_cast<llvm::GetElementPtrInst>(gep)) {
         auto& scev = getFAM(module, MAM).getResult<llvm::ScalarEvolutionAnalysis>(*gepInst->getFunction());
         auto gepScev = scev.getSCEV(gepInst);
-        auto offsetScev = scev.getMinusSCEV(gepScev,scev.getSCEV(gep->getPointerOperand()));
-        auto single = scev.getSignedRange(offsetScev).getSingleElement();
-        if (single)
-            return *single;
-        else return std::nullopt;
+        auto offsetScev = scev.getMinusSCEV(gepScev,scev.getSCEV(gepInst->getPointerOperand()));
+        auto range = scev.getSignedRange(offsetScev);
+        if (auto single = range.getSingleElement())
+            return {*single};
+        return std::nullopt;
     } else HANDLE_UNKOWN_VALUE(gep);
 }
 
