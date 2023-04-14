@@ -42,6 +42,9 @@
 #include <llvm/Analysis/PostDominators.h>
 #include <llvm/Analysis/ScalarEvolutionExpressions.h>
 
+#include <array>
+#include <experimental/array>
+
 struct run_on_destruct {
     std::function<void()> func;
     run_on_destruct(auto func) : func{std::move(func)} {}
@@ -67,6 +70,32 @@ struct run_on_destruct {
         llvm::outs().flush();                                                                                   \
         assert(!"Unkown instruction!");                                                                         \
     } while (false)
+
+constexpr std::array scevTypesToString = std::experimental::make_array(
+  "scConstant",
+  "scTruncate",
+  "scZeroExtend",
+  "scSignExtend",
+  "scAddExpr",
+  "scMulExpr",
+  "scUDivExpr",
+  "scAddRecExpr",
+  "scUMaxExpr",
+  "scSMaxExpr",
+  "scUMinExpr",
+  "scSMinExpr",
+  "scSequentialUMinExpr",
+  "scPtrToInt",
+  "scUnknown",
+  "scCouldNotCompute"
+);
+
+#define HANDLE_UNKOWN_SCEV(scev) \
+    do {    \
+        llvm::outs() << "Unkown scev with type '" << scevTypesToString[scev->getSCEVType()] << "':\n";   \
+        llvm::outs() << "\t" << *scev << "\n";   \
+        assert(!"Unknown SCEV type!");  \
+    } while (false) 
 
 #define ASSERT_ELSE_UNKOWN(cond, val)           \
     do {                                        \
