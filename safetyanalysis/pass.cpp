@@ -206,9 +206,7 @@ llvm::PreservedAnalyses MemAccessInstrumentator::run(llvm::Module &module, llvm:
 
     // If the results are not yet available, because no other pass requested
     // them until now, they will be computed on-the-fly.
-    const auto& loadAndStores = mam.getResult<UnsafeAccessFinderAnalysis>(module)
-                                            .setOnlyStores(false)
-                                            .getInfo().unsafeAccesses;
+    const auto& loadAndStores = mam.getResult<UnsafeAccessFinderAnalysis>(module).getOrCreate(false).unsafeAccesses;
 
     llvm::FunctionCallee wrpkru = llvm::Intrinsic::getDeclaration(&module, llvm::Intrinsic::x86_wrpkru);
     llvm::FunctionCallee rdpkru = llvm::Intrinsic::getDeclaration(&module, llvm::Intrinsic::x86_rdpkru);

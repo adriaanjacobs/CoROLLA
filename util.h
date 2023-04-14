@@ -7,6 +7,7 @@
 #include <llvm/IR/Instructions.h>
 #include <array>
 #include <string>
+#include <map>
 
 #if 0
 #ifndef BOOST_STACKTRACE_USE_BACKTRACE
@@ -261,3 +262,29 @@ inline bool isCallTo(llvm::StringRef name, llvm::Instruction* requirer) {
         return true;
     return false;
 }
+
+template<typename AnalysisT>
+class AnalysisResultBuilder {
+    llvm::Module& module;
+    llvm::ModuleAnalysisManager& MAM;
+    // need a container with stable iterators here
+    std::map<uint64_t, AnalysisT> infos;
+public:
+    AnalysisResultBuilder(llvm::Module& module, llvm::ModuleAnalysisManager& MAM)
+        : module{module}, MAM{MAM}
+    {}
+
+    template<typename ...Args>
+    AnalysisT& getOrCreate(Args&& ...args) {
+        auto argsAsArray = std::experimental::make_array(args...);
+        static_assert(argsAsArray.size() <= 64);
+        uint64_t hash = 0;
+        for (uint i = 0; i < argsAsArray.size(); i++) {
+            const auto arg = argsAsArray[i];
+            hash |= (1UL << i);
+        }
+        auto it = infos.try_emplace(hash, module, MAM, std::forward<Args>(args)...).first;
+        return it->second;
+    }
+};
+

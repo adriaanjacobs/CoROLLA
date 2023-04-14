@@ -32,38 +32,6 @@
 //===----------------------------------------------------------------------===//
 /// This class implements an LLVM module analysis pass.
 ///
-class OffsetFinderAnalysis : public llvm::AnalysisInfoMixin<OffsetFinderAnalysis> {
-public:
-
-    struct Finder {
-        std::optional<llvm::APInt> find_offset(llvm::Value* offsetPtr, llvm::Value* const basePtr);
-        bool flowFromXtoAnyY(llvm::Value* X, llvm::ArrayRef<llvm::Value*> Ys);
-
-        Finder(llvm::Module& module, llvm::ModuleAnalysisManager &MAM): module{module}, MAM{MAM} {}
-    private:
-        llvm::Module& module;
-        llvm::ModuleAnalysisManager& MAM;
-    };
-
-    explicit OffsetFinderAnalysis() = default;
-    ~OffsetFinderAnalysis() = default;
-    // Provide a unique key, i.e., memory address to be used by the LLVM's pass
-    // infrastructure.
-    static llvm::AnalysisKey Key;
-    friend llvm::AnalysisInfoMixin<OffsetFinderAnalysis>;
-
-    // Specify the result type of this analysis pass.
-    using Result = Finder;
-
-    // Analyze the bitcode/IR in the given LLVM module.
-    Result run(llvm::Module &M, [[maybe_unused]] llvm::ModuleAnalysisManager &MAM);
-};
-
-using OffsetFinder = OffsetFinderAnalysis::Finder;
-
-//===----------------------------------------------------------------------===//
-/// This class implements an LLVM module analysis pass.
-///
 class IsInBoundsAnalysis : public llvm::AnalysisInfoMixin<IsInBoundsAnalysis> {
 public:
 
@@ -276,36 +244,6 @@ public:
         void pruneDominatedAccesses(llvm::Module& module, llvm::ModuleAnalysisManager& FAM, llvm::DenseSet<llvm::Instruction*>& loadAndStores);
         static std::pair<size_t, bool> find_allocSize(const llvm::DataLayout& dataLayout, const llvm::Value* const allocInstr);
     };
-
-    struct UnsafeAccessInfoBuilder {
-        UnsafeAccessInfoBuilder(llvm::Module& module, llvm::ModuleAnalysisManager& MAM) :
-            module{module}, MAM{MAM}
-        {}
-    private:
-        std::optional<bool> onlyStores = std::nullopt;
-        llvm::Module& module;
-        llvm::ModuleAnalysisManager& MAM;
-        std::array<std::unique_ptr<UnsafeAccessInfo>, 2> infos = {nullptr};
-    public:
-        UnsafeAccessInfoBuilder& setOnlyStores(bool val) {
-            onlyStores.emplace(val);
-            return *this;
-        }
-
-        bool hasInfo() {
-            return llvm::any_of(infos, [](auto& ptr) { return ptr != nullptr; });
-        }
-
-        UnsafeAccessInfo& getInfo() {
-            assert(onlyStores.has_value());
-            uint idx = (uint)onlyStores.value();
-            assert(idx >= 0 && idx < 2);
-            auto& info = infos.at(idx);
-            if (!info)
-                info = std::make_unique<UnsafeAccessInfo>(module, MAM, onlyStores.value());
-            return *info;
-        }
-    };
     
     explicit UnsafeAccessFinderAnalysis() = default;
     ~UnsafeAccessFinderAnalysis() = default;
@@ -315,11 +253,11 @@ public:
     friend llvm::AnalysisInfoMixin<UnsafeAccessFinderAnalysis>;
 
     // Specify the result type of this analysis pass.
-    using Result = UnsafeAccessInfoBuilder;
+    using Result = AnalysisResultBuilder<UnsafeAccessInfo>;
 
     // Analyze the bitcode/IR in the given LLVM module.
     Result run(llvm::Module &M, llvm::ModuleAnalysisManager &MAM) {
-        return UnsafeAccessInfoBuilder{M, MAM};
+        return Result{M, MAM};
     }
 };
 
