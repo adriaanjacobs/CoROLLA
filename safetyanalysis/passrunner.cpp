@@ -72,7 +72,6 @@ if (argc != 3) {
     MAM.registerPass([&] { return PointerDetectionAnalysis{}; });
     MAM.registerPass([&] { return SillyPerlAnalysis{}; });
     MAM.registerPass([&] { return UnsafeAccessFinderAnalysis{}; });
-    MAM.registerPass([&] { return OffsetFinderAnalysis{}; });
     MAM.registerPass([&] { return AllocWrapperAnalysis{}; });
     MAM.registerPass([&] { return IsInBoundsAnalysis{}; });
 
