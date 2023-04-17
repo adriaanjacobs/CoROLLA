@@ -69,11 +69,7 @@ if (argc != 3) {
     PB.crossRegisterProxies(LAM, FAM, CGAM, MAM);
 
     // Register our analyses
-    MAM.registerPass([&] { return PointerDetectionAnalysis{}; });
-    MAM.registerPass([&] { return SillyPerlAnalysis{}; });
-    MAM.registerPass([&] { return UnsafeAccessFinderAnalysis{}; });
-    MAM.registerPass([&] { return AllocWrapperAnalysis{}; });
-    MAM.registerPass([&] { return IsInBoundsAnalysis{}; });
+    MemAccessInstrumentator::registerAnalyses(MAM);
 
     llvm::ModulePassManager MPM;
     IsInBoundsAnalysis::addPassesAround<MemAccessInstrumentator>(MPM);

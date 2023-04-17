@@ -135,8 +135,6 @@ public:
         MPM.addPass(llvm::VerifierPass{});
 
         // SVF simplification passes
-        MPM.addPass(BreakConstantGEPsPass{});
-        MPM.addPass(llvm::createModuleToFunctionPassAdaptor(llvm::UnifyFunctionExitNodesPass{}));
         MPM.addPass(SVFPass{});
         // maybe we fucked up the SVF simplification
         MPM.addPass(llvm::VerifierPass{});
