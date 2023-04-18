@@ -91,11 +91,11 @@ inline llvm::Function* functionOf(llvm::Value* val) {
 
 #define HANDLE_UNKOWN_VALUE(val)                                                                                \
     do {                                                                                                        \
-        if (auto _module__ = moduleOf(val)) {                                                                   \
-            auto filename = "currentmodule.atUnknownValue.debug.ll";                                            \
+        if (llvm::Module* _module__ = moduleOf(val)) {                                                          \
+            const char* filename = "currentmodule.atUnknownValue.debug.ll";                                     \
             dumpModuleToFile(*_module__, filename);                                                             \
             llvm::outs() << "Printed module to '" << filename << "' for debugging!\n";                          \
-            if (auto _func__ = functionOf(val))                                                                 \
+            if (llvm::Function* _func__ = functionOf(val))                                                      \
                 llvm::outs() << "In func: '" << _func__->getName() << "'\n";                                    \
         }                                                                                                       \
         llvm::outs() << "Unkown value type: \n";                                                                \

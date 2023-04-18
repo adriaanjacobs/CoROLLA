@@ -66,7 +66,7 @@ std::optional<llvm::APInt> AllocWrapperDetector::findMinimumAllocSize(llvm::Valu
     if (isStaticAllocationSite(allocInstr)) {
         if (auto allocaInstr = llvm::dyn_cast<llvm::AllocaInst>(allocInstr)) {
             auto size = dataLayout.getTypeAllocSize(allocaInstr->getAllocatedType());
-            ASSERT_ELSE_UNKOWN(size > 0, allocInstr);
+            ASSERT_ELSE_UNKOWN(size >= 0, allocInstr); // gcc's `combine_givs` does `alloca(0)` and LLVM is happy with it
             return llvm::APInt{64, size, true};
         } else if (auto globalVariable = llvm::dyn_cast<llvm::GlobalVariable>(allocInstr)) {
             auto size = dataLayout.getTypeAllocSize(globalVariable->getType()->getPointerElementType());

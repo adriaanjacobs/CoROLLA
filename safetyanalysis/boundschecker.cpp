@@ -121,6 +121,9 @@ bool BoundsChecker::isInBounds_internal(llvm::Value* offsetPtr, llvm::APInt offs
     llvm::Value* current = offsetPtr;
 
     while (true) {
+        if (llvm::is_contained(passedInstrs, current))
+            return false;
+
         auto oldCurrent = current;
         passedInstrs.push_back(current);
 
@@ -152,9 +155,8 @@ bool BoundsChecker::isInBounds_internal(llvm::Value* offsetPtr, llvm::APInt offs
                 return false;
             for (auto argOperand : incomingVals) {
                 assert(argOperand->getType() == argument->getType());
-                if (llvm::is_contained(passedInstrs, argOperand) || !isInBounds_internal<DIR>(argOperand, offset, isInRange)) {
+                if (!isInBounds_internal<DIR>(argOperand, offset, isInRange)) 
                     return false;
-                }
             }
             return true;
         } else if (auto callInst = llvm::dyn_cast<llvm::CallBase>(current)) {
@@ -168,7 +170,7 @@ bool BoundsChecker::isInBounds_internal(llvm::Value* offsetPtr, llvm::APInt offs
                 for (auto& bb : *calledFunc) {
                     if (auto retInst = llvm::dyn_cast<llvm::ReturnInst>(bb.getTerminator())) {
                         auto retVal = retInst->getReturnValue();
-                        if (llvm::is_contained(passedInstrs, retVal) || !isInBounds_internal<DIR>(retVal, offset, isInRange))
+                        if (!isInBounds_internal<DIR>(retVal, offset, isInRange))
                             return false;
                     }
                 }
@@ -429,7 +431,7 @@ bool BoundsChecker::isInBounds_internal(llvm::Value* offsetPtr, llvm::APInt offs
                 for (auto& incomingVal : phiNode->incoming_values()) {
                     // llvm::outs() << "For phinode '" << *phiNode << "': Now analyzing incoming val: '" << *incomingVal.get() << "'\n";
                     llvm::Value* val = incomingVal.get();
-                    allInBounds = allInBounds && !llvm::is_contained(passedInstrs, val) && isInBounds_internal<DIR>(val, offset, isInRange);
+                    allInBounds = allInBounds && isInBounds_internal<DIR>(val, offset, isInRange);
                 }
                 return allInBounds;
             }
