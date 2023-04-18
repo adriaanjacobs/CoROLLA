@@ -102,12 +102,16 @@ bool BoundsChecker::isInRange_nonCached(llvm::Value* offsetPtr, llvm::APInt offs
 
 template<DIRECTION DIR>
 bool BoundsChecker::isInBounds_internal(llvm::Value* offsetPtr, llvm::APInt offset, const std::function<std::optional<bool>(llvm::Value*, llvm::APInt, DIRECTION)>& isInRange, bool checkTheCache) {
-    static thread_local std::vector<llvm::Value*> passedInstrs;
+    struct PassedValue {
+        llvm::Value* val;
+        llvm::APInt offset;
+    };
+    static thread_local std::vector<PassedValue> passedInstrs;
     const auto size = passedInstrs.size();
     // llvm::outs() << rand() << ": Called findoffset (nested level: " << size << ")\n";
     run_on_destruct resetPassedInstrs([&](){
         assert(passedInstrs.size() >= 1);
-        this->mostRecentDecider = passedInstrs.back();
+        this->mostRecentDecider = passedInstrs.back().val;
         assert(size <= passedInstrs.size());
         passedInstrs.erase(passedInstrs.begin() + size, passedInstrs.end());
         assert(passedInstrs.size() == size);
@@ -121,11 +125,19 @@ bool BoundsChecker::isInBounds_internal(llvm::Value* offsetPtr, llvm::APInt offs
     llvm::Value* current = offsetPtr;
 
     while (true) {
-        if (llvm::is_contained(passedInstrs, current))
-            return false;
+        // check if we've seen this one before
+        auto passedValIt = llvm::find_if(passedInstrs, [&] (const PassedValue& passedVal) -> bool {
+            return passedVal.val == current;
+        });
+        if (passedValIt != passedInstrs.end()) {
+            if (passedValIt->offset == offset)
+                return true; // dataflow back to myself with no offset difference? safe
+            else
+                return false; // may change offset indefinitely
+        }
 
         auto oldCurrent = current;
-        passedInstrs.push_back(current);
+        passedInstrs.push_back({current, offset});
 
         if (checkTheCache)
             if (auto val = isInCache(current, offset))
@@ -563,7 +575,7 @@ bool BoundsChecker::isInBounds_internal(llvm::Value* offsetPtr, llvm::APInt offs
             current = freeze->getOperand(0);
         } else {
             llvm::outs() << "Weird guy: \n";
-            llvm::outs() << *current << "\n";
+            llvm::outs() << "\t" <<  *current << "\n";
             llvm::outs() << "Is an instruction: " << (llvm::isa<llvm::Instruction>(current) ? "yes" : "no") << ".\n";
             llvm::outs() << "Is a metadataval: " << (llvm::isa<llvm::MetadataAsValue>(current) ? "yes" : "no") << ".\n";
             llvm::outs() << "Is a constant int: " << (llvm::isa<llvm::ConstantInt>(current) ? "yes" : "no") << ".\n";
@@ -571,8 +583,8 @@ bool BoundsChecker::isInBounds_internal(llvm::Value* offsetPtr, llvm::APInt offs
             llvm::outs().flush();
             llvm::outs() << "Arrived here via (oldest first):\n";
             uint i = 1;
-            for (auto& instr : passedInstrs) {
-                llvm::outs() << i << ": " << *instr << " (in '" << getFuncName(instr) << "')\n";
+            for (auto& passedVal : passedInstrs) {
+                llvm::outs() << i << ": " << *passedVal.val << " (in '" << getFuncName(passedVal.val) << "')\n";
                 i++;
             }
 
