@@ -311,8 +311,9 @@ AllocWrapperDetector::Detector(llvm::Module& module, llvm::ModuleAnalysisManager
                         } else assert(status == AllocSiteStatus::NULLPTR);
                     }
 
-                    if (allOK && atLeastOneAllocationSite && !retvals.empty()) {
-                        assert(allocFuncs.find(&potWrapper) == allocFuncs.end());
+                    auto& callSiteInfo = pointerDetector.getCallSiteInfo(&potWrapper);
+                    if (allOK && atLeastOneAllocationSite && !retvals.empty() && callSiteInfo.isComplete) {
+                        assert(!allocFuncs.count(&potWrapper));
                         allocFuncs[&potWrapper].allocSites = allAllocSitesInWrapper;
                     }
                 }
