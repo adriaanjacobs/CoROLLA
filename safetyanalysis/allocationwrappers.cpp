@@ -261,29 +261,63 @@ AllocWrapperDetector::Detector(llvm::Module& module, llvm::ModuleAnalysisManager
                 auto retType = potWrapper.getReturnType();
                 if (retType != llvm::Type::getVoidTy(context) && dataLayout.getTypeSizeInBits(retType) == 64 && allocFuncs.find(&potWrapper) == allocFuncs.end()) {
 
-                    bool qualifiesAsWrapper = [&] {
+                    bool hasWeirdSideEffects = [&] {
                         for (auto& bb : potWrapper) {
                             for (auto& inst : bb) {
-                                if (auto call = llvm::dyn_cast<llvm::CallBase>(&inst)) {
-                                    auto calledFunc = call->getCalledFunction();
-                                    // check if this function has side-effects that SVF should model!
-                                    if (!calledFunc)
+                                bool instHasWeirdSideEffects = [&] () -> bool {
+                                    if (auto call = llvm::dyn_cast<llvm::CallBase>(&inst)) {
+                                        auto calledFunc = call->getCalledFunction();
+                                        // check if this function has side-effects that SVF should model!
+                                        if (!calledFunc)
+                                            return true;
+
+                                        if (calledFunc->doesNotReturn())
+                                            return false;
+
+                                        if (calledFunc->onlyReadsMemory())
+                                            return false;
+
+                                        if (allocFuncs.count(calledFunc))
+                                            return false;
+
+                                        if (calledFunc->isDeclaration()) {
+                                            auto extAPI = SVF::ExtAPI::getExtAPI();
+                                            auto name = calledFunc->getName().str();
+                                            auto type = extAPI->get_type(name);
+                                            switch (type) {
+                                                case EFT_NULL:
+                                                case EFT_NOOP:
+                                                case EFT_ALLOC:
+                                                case EFT_NOSTRUCT_ALLOC:
+                                                case EFT_REALLOC:
+                                                case EFT_STAT:
+                                                case EFT_STAT2:
+                                                    return false;
+                                                default:
+                                                    return true;
+                                            }
+                                        } else return true;
+                                    } else if (auto store = llvm::dyn_cast<llvm::StoreInst>(&inst)) {
+                                        auto storedVal = store->getValueOperand();
+                                        // TODO: extend this with a small escape analysis to see if 
+                                        // SVF will actually see effects from this
+                                        if (pointerDetector.is_confirmed_pointer(storedVal) || storedVal->getType()->isPointerTy()) {
+                                            if (llvm::isa<llvm::ConstantData>(storedVal))
+                                                return false;
+                                            return true; // this is information SVF should have!
+                                        }
                                         return false;
-                                    if (!(calledFunc->isDeclaration() || calledFunc->doesNotReturn() || allocFuncs.find(calledFunc) != allocFuncs.end() || calledFunc->onlyReadsMemory()))
-                                        return false;
-                                } else if (auto store = llvm::dyn_cast<llvm::StoreInst>(&inst)) {
-                                    auto storedVal = store->getValueOperand();
-                                    // TODO: extend this with a small escape analysis to see if 
-                                    // SVF will actually see effects from this
-                                    if (pointerDetector.is_confirmed_pointer(storedVal))
-                                        return false; // this is information SVF should have!
-                                }
+                                    } else return false;
+                                } ();
+
+                                if (instHasWeirdSideEffects)
+                                    return true;
                             }
                         }
-                        return true;
+                        return false;
                     } ();
 
-                    if (!qualifiesAsWrapper)
+                    if (hasWeirdSideEffects)
                         continue;
 
                     llvm::DenseSet<llvm::Value*> retvals;
