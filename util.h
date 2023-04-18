@@ -46,20 +46,57 @@
 #include <array>
 #include <experimental/array>
 
-struct run_on_destruct {
-    std::function<void()> func;
-    run_on_destruct(auto func) : func{std::move(func)} {}
-    ~run_on_destruct() { func(); }
-};
+inline void dumpModuleToFile(llvm::Module& module, std::string_view name) {
+    std::error_code code;
+    llvm::raw_fd_ostream file(name, code);
+    assert(code.value() == 0);
+    module.print(file, nullptr);
+}
+
+// adapted from 'getModuleFromVal' in LLVM's AsmWriter.cpp
+inline llvm::Module* moduleOf(llvm::Value* val) {
+    using namespace llvm;
+    if (auto arg = dyn_cast<Argument>(val))
+        return arg->getParent() ? arg->getParent()->getParent() : nullptr;
+    
+    if (auto bb = dyn_cast<BasicBlock>(val))
+        return bb->getParent() ? bb->getParent()->getParent() : nullptr;
+    
+    if (auto inst = dyn_cast<Instruction>(val)) {
+        auto function = inst->getParent() ? inst->getFunction() : nullptr;
+        return function ? function->getParent() : nullptr;
+    }
+    
+    if (auto globul = dyn_cast<GlobalValue>(val))
+        return globul->getParent();
+    
+    if (auto mtdata = dyn_cast<MetadataAsValue>(val)) {
+        for (auto user : mtdata->users())
+        if (isa<Instruction>(user))
+            if (auto M = moduleOf(user))
+                return M;
+        return nullptr;
+    }
+    
+    return nullptr;
+}
+
+inline llvm::Function* functionOf(llvm::Value* val) {
+    if (auto inst = llvm::dyn_cast<llvm::Instruction>(val))
+        return inst->getFunction();
+    else if (auto arg = llvm::dyn_cast<llvm::Argument>(val))
+        return arg->getParent();
+    else return nullptr;
+}
 
 #define HANDLE_UNKOWN_VALUE(val)                                                                                \
     do {                                                                                                        \
-        if (auto inst__ = llvm::dyn_cast<llvm::Instruction>(val)) {                                             \
-            std::error_code code;                                                                               \
-            llvm::raw_fd_ostream unknownValueOutputFile("currentmodule.atUnknownValue.debug.ll", code);         \
-            assert(code.value() == 0);                                                                          \
-            inst__->getModule()->print(unknownValueOutputFile, nullptr);                                        \
-            llvm::outs() << "Printed module for debugging!\n";                                                  \
+        if (auto _module__ = moduleOf(val)) {                                                                   \
+            auto filename = "currentmodule.atUnknownValue.debug.ll";                                            \
+            dumpModuleToFile(*_module__, filename);                                                             \
+            llvm::outs() << "Printed module to '" << filename << "' for debugging!\n";                          \
+            if (auto _func__ = functionOf(val))                                                                 \
+                llvm::outs() << "In func: '" << _func__->getName() << "'\n";                                    \
         }                                                                                                       \
         llvm::outs() << "Unkown value type: \n";                                                                \
         llvm::outs() << "\t" << *val << "\n\n";                                                                 \
@@ -109,6 +146,12 @@ constexpr std::array scevTypesToString = std::experimental::make_array(
 #define BREAKPOINT() \
     asm("int $3")
 
+struct run_on_destruct {
+    std::function<void()> func;
+    run_on_destruct(auto func) : func{std::move(func)} {}
+    ~run_on_destruct() { func(); }
+};
+
 inline llvm::FunctionAnalysisManager& getFAM(llvm::Module& module, llvm::ModuleAnalysisManager& MAM) {
     return MAM.getResult<llvm::FunctionAnalysisManagerModuleProxy>(module).getManager();
 }
@@ -116,15 +159,6 @@ inline llvm::FunctionAnalysisManager& getFAM(llvm::Module& module, llvm::ModuleA
 inline llvm::LoopAnalysisManager& getLAM(llvm::Function& function, llvm::FunctionAnalysisManager& FAM) {
     return FAM.getResult<llvm::LoopAnalysisManagerFunctionProxy>(function).getManager();
 }
-
-inline llvm::Function* functionOf(llvm::Value* val) {
-    if (auto inst = llvm::dyn_cast<llvm::Instruction>(val))
-        return inst->getFunction();
-    else if (auto arg = llvm::dyn_cast<llvm::Argument>(val))
-        return arg->getParent();
-    else return nullptr;
-}
-
 
 template<typename T>
 inline llvm::raw_ostream& operator << (llvm::raw_ostream& OS, const std::optional<T>& optVal) {
@@ -246,13 +280,6 @@ namespace llvm {
     using OptimizationLevel = PassBuilder::OptimizationLevel;
 }
 #endif
-
-inline void dumpModuleToFile(llvm::Module& module, std::string_view name) {
-    std::error_code code;
-    llvm::raw_fd_ostream file(name, code);
-    assert(code.value() == 0);
-    module.print(file, nullptr);
-}
 
 inline bool isCallTo(llvm::StringRef name, llvm::Instruction* requirer) {
     auto call = llvm::dyn_cast<llvm::CallBase>(requirer);

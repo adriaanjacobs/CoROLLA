@@ -117,6 +117,9 @@ UnsafeAccessFinderAnalysis::UnsafeAccessInfo::UnsafeAccessInfo(llvm::Module& mod
         for (auto store : loadAndStores)
             assert(llvm::isa<llvm::StoreInst>(store));
     unsafeAccesses = loadAndStores;
+
+    for (auto access : unsafeAccesses) 
+        access->setMetadata("unsafe", llvm::MDNode::get(access->getContext(), llvm::None));
 }
 
 llvm::AnalysisKey UnsafeAccessFinderAnalysis::Key;
