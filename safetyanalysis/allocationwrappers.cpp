@@ -498,10 +498,6 @@ const llvm::DenseMap<llvm::StringRef, std::function<llvm::APInt(AllocWrapperDete
     {"savealloc", nullptr},
     {"setmntent", nullptr},
     {"shmat", nullptr},
-    //These 2 return the previous handler.
-    {"__sysv_signal", nullptr},
-    {"signal", nullptr},
-    {"sigset", nullptr},
     {"tempnam", nullptr},
     {"tmpfile", nullptr},
     {"tmpfile64", nullptr},
