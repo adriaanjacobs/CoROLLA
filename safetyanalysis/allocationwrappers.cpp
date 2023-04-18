@@ -336,10 +336,16 @@ AllocWrapperDetector::Detector(llvm::Module& module, llvm::ModuleAnalysisManager
 
         llvm::outs() << "Here are all functions whose name contains alloc/new that we didn't identify: \n";
         for (auto& func : module) {
-            if ((func.getName().contains_insensitive("alloc") || func.getName().contains_insensitive("new")) && allocFuncs.find(&func) == allocFuncs.end()) {
+            if ((func.getName().contains_insensitive("alloc") || func.getName().contains_insensitive("new")) && !allocFuncs.count(&func)) {
                 llvm::outs() << "\t'" <<  func.getName() << "'\n";
                 // allocFuncs.insert(&func);
             }
+        }
+
+        llvm::outs() << "Here are all functions that return 'noalias' that we didn't identify: \n";
+        for (auto& func : module) {
+            if (!allocFuncs.count(&func) && func.hasRetAttribute(llvm::Attribute::NoAlias))
+                llvm::outs() << "\t'" << func.getName() << "'\n";
         }
     }
 #endif
