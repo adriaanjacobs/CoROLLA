@@ -55,9 +55,10 @@ struct PointerDetector {
 
     struct CallSiteInfo {
         llvm::DenseSet<llvm::CallBase*> directCallSites;
-        bool isComplete;
+        llvm::DenseSet<llvm::Use*> opaqueUses;
+        bool isOnlyDirectlyCalled () const;
     };
-    const CallSiteInfo& getCallSiteInfo(llvm::Function* function) const;
+    CallSiteInfo& getCallSiteInfo(llvm::Function* function) const;
     bool getIncomingValuesForArgument(llvm::Argument* argument, llvm::DenseSet<llvm::Value*>& incomingVals) const;
 
     llvm::APInt findMinimumUnsignedValue(llvm::Value* val, llvm::Function* context) const;
@@ -71,7 +72,7 @@ private:
     llvm::ModuleAnalysisManager& MAM;
 
     mutable llvm::DenseMap<llvm::Function*, CallSiteInfo> cachedCallSiteInfo;
-    bool funcIsOnlyDirectlyCalled(llvm::Value* function, llvm::DenseSet<llvm::CallBase*>& callSites) const;
+    void collectCallSiteInfo(llvm::Value* function, llvm::DenseSet<llvm::CallBase*>& callSites, llvm::DenseSet<llvm::Use*>& opaqueUses) const;
 
     void identify_start_pointers(llvm::Module& module);
     void mark_pointer_origins(llvm::Value* pointer);

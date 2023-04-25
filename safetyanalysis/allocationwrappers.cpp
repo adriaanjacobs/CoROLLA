@@ -346,7 +346,7 @@ AllocWrapperDetector::Detector(llvm::Module& module, llvm::ModuleAnalysisManager
                     }
 
                     auto& callSiteInfo = pointerDetector.getCallSiteInfo(&potWrapper);
-                    if (allOK && atLeastOneAllocationSite && !retvals.empty() && callSiteInfo.isComplete) {
+                    if (allOK && atLeastOneAllocationSite && !retvals.empty() && callSiteInfo.isOnlyDirectlyCalled()) {
                         assert(!allocFuncs.count(&potWrapper));
                         allocFuncs[&potWrapper].allocSites = allAllocSitesInWrapper;
                     }

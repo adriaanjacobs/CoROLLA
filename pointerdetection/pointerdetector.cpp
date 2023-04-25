@@ -782,56 +782,55 @@ std::optional<llvm::Value*> PointerDetector::mark_binaryOp_origins(T* binaryOp, 
     return std::nullopt;
 }
 
-const PointerDetector::CallSiteInfo& PointerDetector::getCallSiteInfo(llvm::Function* function) const {
+PointerDetector::CallSiteInfo& PointerDetector::getCallSiteInfo(llvm::Function* function) const {
     auto [callSiteInfoIt, inserted] = cachedCallSiteInfo.try_emplace(function);
+    auto& info = callSiteInfoIt->getSecond();
     if (inserted) 
-        callSiteInfoIt->getSecond().isComplete = funcIsOnlyDirectlyCalled(function, callSiteInfoIt->getSecond().directCallSites);
-    return callSiteInfoIt->getSecond();
+        collectCallSiteInfo(function, info.directCallSites, info.opaqueUses);
+    return info;
+}
+
+bool PointerDetector::CallSiteInfo::isOnlyDirectlyCalled() const {
+    if (directCallSites.empty())
+        return false;
+    return opaqueUses.empty();
 }
 
 // whatever this returns, callSites contains all known callsites
-bool PointerDetector::funcIsOnlyDirectlyCalled(llvm::Value* function, llvm::DenseSet<llvm::CallBase*>& callSites) const {
+void PointerDetector::collectCallSiteInfo(llvm::Value* function, llvm::DenseSet<llvm::CallBase*>& callSites, llvm::DenseSet<llvm::Use*>& opaqueUses) const {
     auto& dataLayout = module.getDataLayout();
     if (function->getNumUses() == 0) 
-        return false;
+        return;
 
-    bool onlyDirectlyCalled = true;
     for (auto& funcUse : function->uses()) {
-        auto funcIsDirectlyCalled = [&] () -> bool {
-            auto user = funcUse.getUser();
-            assert(function == funcUse.get());
-            if (auto callInst = llvm::dyn_cast<llvm::CallBase>(user)) {
-                if (callInst->getCalledFunction() != function) // the function is passed as argument
-                    return false;
+        auto user = funcUse.getUser();
+        assert(function == funcUse.get());
+        if (auto callInst = llvm::dyn_cast<llvm::CallBase>(user)) {
+            if (callInst->getCalledFunction() != function) // the function is passed as argument
+                opaqueUses.insert(&funcUse);
+            else 
                 callSites.insert(callInst);
-                return true;
-            } else if (auto storeInst = llvm::dyn_cast<llvm::StoreInst>(user)) {
-                ASSERT_ELSE_UNKOWN(storeInst->getValueOperand() == function, user);
-                return false;
-            } else if (llvm::isa<llvm::ConstantAggregate, llvm::GlobalVariable, llvm::PtrToIntOperator>(user)) {
-                return false;
-            } else if (auto phiNode = llvm::dyn_cast<llvm::PHINode>(user)) {
-                return false;
-            } else if (auto select = llvm::dyn_cast<llvm::SelectInst>(user)) {
-                ASSERT_ELSE_UNKOWN(select->getCondition() != function, user);
-                return false;
-            } else if (auto bitcast = llvm::dyn_cast<llvm::BitCastOperator>(user)) {
-                return funcIsOnlyDirectlyCalled(bitcast, callSites);
-            } else if (auto icmp = llvm::dyn_cast<llvm::ICmpInst>(user)) {
-                // the consideration here is that a icmp indicates that the program expects
-                // that some function pointer _may_ refer to function here
-                // Hence, the question becomes how the programmer obtained this function pointer to function?
-                // It may theoretically be a wild guess based on an integer, although that is unlikely
-                // There's no real way to guarantee anything here, let's just be conservative
-                return false;
-            } else HANDLE_UNKOWN_VALUE(user);
-        } ();
-        
-        if (!funcIsDirectlyCalled)
-            onlyDirectlyCalled = false;
-    }       
-
-    return onlyDirectlyCalled;
+        } else if (auto storeInst = llvm::dyn_cast<llvm::StoreInst>(user)) {
+            ASSERT_ELSE_UNKOWN(storeInst->getValueOperand() == function, user);
+            opaqueUses.insert(&funcUse);
+        } else if (llvm::isa<llvm::ConstantAggregate, llvm::GlobalVariable, llvm::PtrToIntOperator>(user)) {
+            opaqueUses.insert(&funcUse);
+        } else if (auto phiNode = llvm::dyn_cast<llvm::PHINode>(user)) {
+            opaqueUses.insert(&funcUse);
+        } else if (auto select = llvm::dyn_cast<llvm::SelectInst>(user)) {
+            ASSERT_ELSE_UNKOWN(select->getCondition() != function, user);
+            opaqueUses.insert(&funcUse);
+        } else if (auto bitcast = llvm::dyn_cast<llvm::BitCastOperator>(user)) {
+            collectCallSiteInfo(bitcast, callSites, opaqueUses);
+        } else if (auto icmp = llvm::dyn_cast<llvm::ICmpInst>(user)) {
+            // the consideration here is that a icmp indicates that the program expects
+            // that some function pointer _may_ refer to function here
+            // Hence, the question becomes how the programmer obtained this function pointer to function?
+            // It may theoretically be a wild guess based on an integer, although that is unlikely
+            // There's no real way to guarantee anything here, let's just be conservative
+            opaqueUses.insert(&funcUse);
+        } else HANDLE_UNKOWN_VALUE(user);
+    }
 }
 
 bool PointerDetector::getIncomingValuesForArgument(llvm::Argument* argument, llvm::DenseSet<llvm::Value*>& incomingVals) const {
@@ -839,7 +838,7 @@ bool PointerDetector::getIncomingValuesForArgument(llvm::Argument* argument, llv
 
     auto& callSiteInfo = getCallSiteInfo(function);
 
-    bool isComplete = callSiteInfo.isComplete;
+    bool isComplete = callSiteInfo.isOnlyDirectlyCalled();
     // collect incoming values for the argument value, in suitable callsites
     for (auto callInst : callSiteInfo.directCallSites) {
         assert(callInst->getCalledFunction());
