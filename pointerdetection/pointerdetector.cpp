@@ -783,7 +783,7 @@ std::optional<llvm::Value*> PointerDetector::mark_binaryOp_origins(T* binaryOp, 
 }
 
 PointerDetector::CallSiteInfo& PointerDetector::getCallSiteInfo(llvm::Function* function) const {
-    auto [callSiteInfoIt, inserted] = cachedCallSiteInfo.try_emplace(function);
+    auto [callSiteInfoIt, inserted] = cachedCallSiteInfo.try_emplace(function, function);
     auto& info = callSiteInfoIt->getSecond();
     if (inserted) 
         collectCallSiteInfo(function, info.directCallSites, info.opaqueUses);
@@ -795,9 +795,15 @@ void PointerDetector::forgetCallSiteInfo(llvm::Function* function) {
 }
 
 bool PointerDetector::CallSiteInfo::isOnlyDirectlyCalled() const {
-    if (directCallSites.empty())
-        return false;
+    if (noUsesFound()) {
+        ASSERT_ELSE_UNKOWN(func->getNumUses() == 0, func);
+        ASSERT_ELSE_UNKOWN(!func->hasLocalLinkage(), func); // otherwise must be dead
+    }
     return opaqueUses.empty();
+}
+
+bool PointerDetector::CallSiteInfo::noUsesFound() const {
+    return directCallSites.empty() && opaqueUses.empty();
 }
 
 // whatever this returns, callSites contains all known callsites
@@ -842,7 +848,7 @@ bool PointerDetector::getIncomingValuesForArgument(llvm::Argument* argument, llv
 
     auto& callSiteInfo = getCallSiteInfo(function);
 
-    bool isComplete = callSiteInfo.isOnlyDirectlyCalled();
+    bool isComplete = callSiteInfo.isOnlyDirectlyCalled() && !callSiteInfo.noUsesFound();
     // collect incoming values for the argument value, in suitable callsites
     for (auto callInst : callSiteInfo.directCallSites) {
         assert(callInst->getCalledFunction());
@@ -851,6 +857,9 @@ bool PointerDetector::getIncomingValuesForArgument(llvm::Argument* argument, llv
             incomingVals.insert(incomingVal);
         } else isComplete = false;
     }
+
+    if (isComplete)
+        ASSERT_ELSE_UNKOWN(!incomingVals.empty(), function);
 
     return isComplete;
 }

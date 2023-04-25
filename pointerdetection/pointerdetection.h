@@ -33,7 +33,6 @@ public:
 //===----------------------------------------------------------------------===//
 /// This class implements an LLVM module analysis pass.
 ///
-
 struct PointerDetector {
     llvm::DenseSet<llvm::Value*> pointers;
     llvm::DenseSet<llvm::Value*> negatedPointers;
@@ -54,12 +53,20 @@ struct PointerDetector {
     std::optional<BinaryOpValueTypes> findBinaryOpValueTypes(llvm::BinaryOperator* binaryOp) const;
 
     struct CallSiteInfo {
+        llvm::Function* func;
         llvm::DenseSet<llvm::CallBase*> directCallSites;
         llvm::DenseSet<llvm::Use*> opaqueUses;
+
+        CallSiteInfo(llvm::Function* func) : 
+            func{func} 
+        {}
         bool isOnlyDirectlyCalled () const;
+        bool noUsesFound() const;
     };
     CallSiteInfo& getCallSiteInfo(llvm::Function* function) const;
     void forgetCallSiteInfo(llvm::Function* function);
+
+    // warning: currently ignores direct calls from external code (publically linked functions)
     bool getIncomingValuesForArgument(llvm::Argument* argument, llvm::DenseSet<llvm::Value*>& incomingVals) const;
 
     llvm::APInt findMinimumUnsignedValue(llvm::Value* val, llvm::Function* context) const;
