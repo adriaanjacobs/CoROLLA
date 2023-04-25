@@ -790,6 +790,10 @@ PointerDetector::CallSiteInfo& PointerDetector::getCallSiteInfo(llvm::Function* 
     return info;
 }
 
+void PointerDetector::forgetCallSiteInfo(llvm::Function* function) {
+    cachedCallSiteInfo.erase(function);
+}
+
 bool PointerDetector::CallSiteInfo::isOnlyDirectlyCalled() const {
     if (directCallSites.empty())
         return false;

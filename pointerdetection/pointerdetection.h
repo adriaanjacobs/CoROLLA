@@ -59,6 +59,7 @@ struct PointerDetector {
         bool isOnlyDirectlyCalled () const;
     };
     CallSiteInfo& getCallSiteInfo(llvm::Function* function) const;
+    void forgetCallSiteInfo(llvm::Function* function);
     bool getIncomingValuesForArgument(llvm::Argument* argument, llvm::DenseSet<llvm::Value*>& incomingVals) const;
 
     llvm::APInt findMinimumUnsignedValue(llvm::Value* val, llvm::Function* context) const;
