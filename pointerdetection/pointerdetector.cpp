@@ -289,7 +289,6 @@ llvm::Value* PointerDetector::find_real_base(llvm::Value *arithmetic) const {
         ) {
             done = true;
         } else if (auto constantInt = llvm::dyn_cast<llvm::ConstantInt>(current)) {
-            ASSERT_ELSE_UNKOWN(constantInt->isZero() || constantInt->equalsInt(-1), current);
             done = true;
         } else if (auto freeze = llvm::dyn_cast<llvm::FreezeInst>(current)) {
             // if the below fires, i think we can assume it's a safe pointer
