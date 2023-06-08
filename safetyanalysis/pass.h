@@ -136,6 +136,7 @@ public:
 
         // SVF simplification passes
         MPM.addPass(SVFPass{});
+        MPM.addPass(llvm::SyntheticCountsPropagation{});
         // maybe we fucked up the SVF simplification
         MPM.addPass(llvm::VerifierPass{});
         // our own instrumentation
