@@ -171,8 +171,12 @@ bool BoundsChecker::isInBounds_internal(llvm::Value* offsetPtr, llvm::APInt offs
                     return false;
             }
             return true;
-        } else if (auto callInst = llvm::dyn_cast<llvm::CallBase>(current)) {
-            if (auto calledFunc = callInst->getCalledFunction()) {
+        } else if (auto call = llvm::dyn_cast<llvm::CallBase>(current)) {
+            auto knownCallees = ::getKnownCallees(call);
+            if (knownCallees.empty())
+                return false;
+
+            for (auto calledFunc : knownCallees) {
                 if (calledFunc->isDeclaration()) {
                     // if it was an allocation function, we would've found it by now
                     // maybe i can still model some common ones here?
@@ -186,9 +190,9 @@ bool BoundsChecker::isInBounds_internal(llvm::Value* offsetPtr, llvm::APInt offs
                             return false;
                     }
                 }
-                return true;
-            } // else indirect call, can't look through those :/. Maybe do a pointer analysis here?
-            return false;
+            }
+
+            return true;
         } else if (auto gepInstr = llvm::dyn_cast<llvm::GetElementPtrInst>(current)) {
             if (gepInstr->hasAllConstantIndices()) {
                 for (auto& idxuse : gepInstr->indices())

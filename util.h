@@ -315,3 +315,25 @@ public:
     }
 };
 
+/// Return the set of functions this call site is known to call. For direct
+/// calls, the returned set contains the called function. For indirect calls,
+/// this function collects known callees from !callees metadata, if present.
+inline llvm::SmallVector<llvm::Function*> getKnownCallees(llvm::CallBase* call) {
+    llvm::SmallVector<llvm::Function*> callees;
+
+    if (auto func = call->getCalledFunction()) {
+        // If the call site is direct, just add the called function to the set.
+        callees.push_back(func);
+        return callees;
+    }
+
+    if (auto node = call->getMetadata(llvm::LLVMContext::MD_callees)) {
+        // Otherwise, if the call site is indirect, collect the known callees from
+        // !callees metadata if present.
+        for (const auto& operand : node->operands())
+            if (auto *MDConstant = llvm::mdconst::extract_or_null<llvm::Constant>(operand))
+                callees.push_back(cast<llvm::Function>(MDConstant));
+    }
+
+    return callees;
+}

@@ -13,6 +13,7 @@
 #include <llvm/Transforms/IPO/FunctionAttrs.h>
 #include <llvm/Transforms/IPO/InferFunctionAttrs.h>
 #include <llvm/Transforms/IPO/SyntheticCountsPropagation.h>
+#include <llvm/Transforms/IPO/CalledValuePropagation.h>
 #include <llvm/Transforms/Scalar/DCE.h>
 #include <llvm/Transforms/Scalar/LICM.h>
 #include <llvm/Transforms/Scalar/IndVarSimplify.h>
@@ -134,6 +135,8 @@ public:
         
         MPM.addPass(llvm::createModuleToFunctionPassAdaptor(std::move(FPM), true));
         MPM.addPass(llvm::VerifierPass{});
+
+        MPM.addPass(llvm::CalledValuePropagationPass{});
 
         // SVF simplification passes
         MPM.addPass(SVFPass{});
