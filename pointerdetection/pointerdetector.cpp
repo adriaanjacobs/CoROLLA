@@ -805,7 +805,7 @@ bool PointerDetector::CallSiteInfo::noUsesFound() const {
     return directCallSites.empty() && opaqueUses.empty();
 }
 
-// whatever this returns, callSites contains all known callsites
+// whatever this returns, callSites contains all known callsites, and opaqueUses contains all uses we couldn't further analyze
 void PointerDetector::collectCallSiteInfo(llvm::Value* function, llvm::DenseSet<llvm::CallBase*>& callSites, llvm::DenseSet<llvm::Use*>& opaqueUses) const {
     auto& dataLayout = module.getDataLayout();
     if (function->getNumUses() == 0) 
@@ -814,11 +814,11 @@ void PointerDetector::collectCallSiteInfo(llvm::Value* function, llvm::DenseSet<
     for (auto& funcUse : function->uses()) {
         auto user = funcUse.getUser();
         assert(function == funcUse.get());
-        if (auto callInst = llvm::dyn_cast<llvm::CallBase>(user)) {
-            if (callInst->getCalledFunction() != function) // the function is passed as argument
+        if (auto call = llvm::dyn_cast<llvm::CallBase>(user)) {
+            if (call->getCalledFunction() != function) // the function is passed as argument
                 opaqueUses.insert(&funcUse);
             else 
-                callSites.insert(callInst);
+                callSites.insert(call);
         } else if (auto storeInst = llvm::dyn_cast<llvm::StoreInst>(user)) {
             ASSERT_ELSE_UNKOWN(storeInst->getValueOperand() == function, user);
             opaqueUses.insert(&funcUse);
@@ -829,8 +829,11 @@ void PointerDetector::collectCallSiteInfo(llvm::Value* function, llvm::DenseSet<
         } else if (auto select = llvm::dyn_cast<llvm::SelectInst>(user)) {
             ASSERT_ELSE_UNKOWN(select->getCondition() != function, user);
             opaqueUses.insert(&funcUse);
-        } else if (auto bitcast = llvm::dyn_cast<llvm::BitCastOperator>(user)) {
-            collectCallSiteInfo(bitcast, callSites, opaqueUses);
+        } else if (llvm::isa<llvm::BitCastOperator, llvm::GlobalAlias>(user)) {
+            if (user->getNumUses() > 0)
+                collectCallSiteInfo(user, callSites, opaqueUses);
+            else
+                opaqueUses.insert(&funcUse);
         } else if (auto icmp = llvm::dyn_cast<llvm::ICmpInst>(user)) {
             // the consideration here is that a icmp indicates that the program expects
             // that some function pointer _may_ refer to function here
