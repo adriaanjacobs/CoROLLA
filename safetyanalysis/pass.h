@@ -210,6 +210,7 @@ public:
 
         llvm::APInt findMmapSize(llvm::CallBase* callInst);
         llvm::APInt sizeOfReturnedPointeeType(llvm::CallBase* callInst);
+        llvm::APInt sizeOfMallocLike(llvm::CallBase* call);
         enum struct AllocSiteStatus { NONE, NULLPTR, ALLOCSITE };
         AllocSiteStatus reducesToAllocationSite(llvm::Value* val, llvm::DenseSet<llvm::Value*>& allocSites);
 

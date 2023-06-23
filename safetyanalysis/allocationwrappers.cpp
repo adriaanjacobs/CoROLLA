@@ -22,6 +22,11 @@ std::optional<decltype(AllocWrapperDetector::builtinAllocToSize)::const_iterator
     auto it = builtinAllocToSize.find(func->getName());
     if (it != builtinAllocToSize.end() && func->isDeclaration())
         return it;
+    if (func->isDeclaration() && func->hasFnAttribute(llvm::Attribute::NoAlias)) {
+        llvm::outs() << "We should get to know '" << func->getName() << "'!\n";
+        assert(!"Add it to the list of known allocation funcs!");
+    }
+
     return std::nullopt;
 }
 
@@ -401,17 +406,21 @@ llvm::APInt AllocWrapperDetector::findMmapSize(llvm::CallBase* callInst) { // re
     return pointerDetector.findMinimumUnsignedValue(callInst->getArgOperand(1), callInst->getFunction());
 }
 
-llvm::APInt AllocWrapperDetector::sizeOfReturnedPointeeType(llvm::CallBase* callInst) {
-    auto size = module.getDataLayout().getTypeAllocSize(callInst->getCalledFunction()->getReturnType()->getPointerElementType());
-    ASSERT_ELSE_UNKOWN(size > 0, callInst);
+llvm::APInt AllocWrapperDetector::sizeOfReturnedPointeeType(llvm::CallBase* call) {
+    auto size = module.getDataLayout().getTypeAllocSize(call->getCalledFunction()->getReturnType()->getPointerElementType());
+    ASSERT_ELSE_UNKOWN(size > 0, call);
     return llvm::APInt{64, size, true};
+}
+
+llvm::APInt AllocWrapperDetector::sizeOfMallocLike(llvm::CallBase* call) {
+    return this->pointerDetector.findMinimumUnsignedValue(call->getArgOperand(0), call->getFunction()); 
 }
 
 // I did not add the globals here because I can't differentiate them at PTSid time
 // Don't know if it matters, but I had a bug on __ctype_toupper_bloc. Don't want to look into it.
 const llvm::DenseMap<llvm::StringRef, std::function<llvm::APInt(AllocWrapperDetector*,llvm::CallBase*)>> AllocWrapperDetector::builtinAllocToSize = {
     {"malloc", [] (AllocWrapperDetector* self, llvm::CallBase* callInst) -> llvm::APInt {
-        return self->pointerDetector.findMinimumUnsignedValue(callInst->getArgOperand(0), callInst->getFunction()); 
+        return self->sizeOfMallocLike(callInst);
     }},
     {"calloc", [] (AllocWrapperDetector* self, llvm::CallBase* callInst) -> llvm::APInt {
         auto lhOperandSize = self->pointerDetector.findMinimumUnsignedValue(callInst->getArgOperand(0), callInst->getFunction());
@@ -546,11 +555,17 @@ const llvm::DenseMap<llvm::StringRef, std::function<llvm::APInt(AllocWrapperDete
     {"xcalloc", nullptr},
     {"xmalloc", nullptr},
     //C++ functions
-    {"_Znwm", nullptr},	// new
-    {"_Znam", nullptr},	// new []
+    {"_Znwm", [] (AllocWrapperDetector* self, llvm::CallBase* call) -> llvm::APInt {
+        return self->sizeOfMallocLike(call);
+    }},	// new
+    {"_Znam", [] (AllocWrapperDetector* self, llvm::CallBase* call) -> llvm::APInt {
+        return self->sizeOfMallocLike(call);
+    }},	// new []
     {"_Znaj", nullptr},	// new
     {"_Znwj", nullptr},	// new []
-    {"__cxa_allocate_exception", nullptr},	// allocate an exception
+    {"__cxa_allocate_exception", [] (AllocWrapperDetector* self, llvm::CallBase* call) -> llvm::APInt {
+        return self->sizeOfMallocLike(call);
+    }},	// allocate an exception
     {"memalign", nullptr},
     {"valloc", nullptr},
     {"SRE_LockCreate", nullptr},

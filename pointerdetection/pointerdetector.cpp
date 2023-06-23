@@ -1167,6 +1167,8 @@ std::optional<PointerDetector::ValueType> PointerDetector::is_unconfirmed_pointe
         } else if (llvm::isa<llvm::InsertElementInst, llvm::InsertValueInst>(current)) {
             return std::nullopt; // these are aggregates/vectors, not pointers.
             // If we want to continue tracking these, we have to represent pointers differently (as val + idx) (or as Use)
+        } else if (auto landingpad = llvm::dyn_cast<llvm::LandingPadInst>(current)) {
+            return std::nullopt; // landingpad returns a struct for C++
         } else if (auto binaryOp = llvm::dyn_cast<llvm::BinaryOperator>(current)) {
             return handle_unconfirmed_binaryOp(binaryOp);
         } else if (auto constantExpr = llvm::dyn_cast<llvm::ConstantExpr>(current)) {
