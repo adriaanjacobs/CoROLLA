@@ -337,3 +337,16 @@ inline llvm::SmallVector<llvm::Function*> getKnownCallees(llvm::CallBase* call) 
 
     return callees;
 }
+
+/*
+    Returns insertionPts suitable for placing instrumentation after CallBase instructions.
+    Returns 2 locations for invokes: normal path & exceptional path
+*/
+inline llvm::SmallVector<llvm::Instruction*, 2> insertionPtAfter(llvm::Instruction* inst) {
+    if (auto invoke = llvm::dyn_cast<llvm::InvokeInst>(inst)) {
+        return {&*invoke->getNormalDest()->getFirstInsertionPt(), &*invoke->getUnwindDest()->getFirstInsertionPt()};
+    } else {
+        ASSERT_ELSE_UNKOWN(inst->getNextNode(), inst);
+        return {inst->getNextNode()};
+    }
+}
