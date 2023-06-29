@@ -6,8 +6,9 @@
 */
 
 #include <llvm/IR/BasicBlock.h>
-#include <llvm/Analysis/LoopInfo.h>
 #include <llvm/IR/Dominators.h>
+#include <llvm/Analysis/LoopInfo.h>
+
 #include <optional>
 
 // LoopInfo contains a mapping from basic block to the innermost loop. Find

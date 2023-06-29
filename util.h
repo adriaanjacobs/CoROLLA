@@ -82,9 +82,14 @@ inline llvm::Module* moduleOf(llvm::Value* val) {
 }
 
 inline llvm::Function* functionOf(llvm::Value* val) {
-    if (auto inst = llvm::dyn_cast<llvm::Instruction>(val))
+    assert(val);
+    if (auto inst = llvm::dyn_cast<llvm::Instruction>(val)) {
+        if (!inst->getParent())
+            llvm::outs() << *inst << "\n";
+        assert(inst->getParent());
+        assert(inst->getParent()->getParent());
         return inst->getFunction();
-    else if (auto arg = llvm::dyn_cast<llvm::Argument>(val))
+    } else if (auto arg = llvm::dyn_cast<llvm::Argument>(val))
         return arg->getParent();
     else return nullptr;
 }
