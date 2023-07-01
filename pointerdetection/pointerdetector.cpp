@@ -901,6 +901,7 @@ std::optional<PointerDetector::ValueType> PointerDetector::handle_unconfirmed_bi
             return static_cast<ValueType>(-lhs.value());
         } break;
         case llvm::BinaryOperator::LShr:
+        case llvm::BinaryOperator::AShr:
         case llvm::BinaryOperator::Shl: {
             // why would you ever shift a pointer?
             if (lhs.has_value() && rhs.has_value()) {
