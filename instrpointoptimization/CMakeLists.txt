@@ -1,0 +1,5 @@
+project(instrpointoptimization)
+
+add_library(instrpointoptimization SHARED loopoptimizations.cpp)
+target_compile_options(instrpointoptimization PRIVATE ${COMMON_FLAGS})
+target_link_libraries(instrpointoptimization reachability)
