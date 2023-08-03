@@ -180,6 +180,8 @@ bool BoundsChecker::isInBounds_internal(llvm::Value* offsetPtr, llvm::APInt offs
                 if (calledFunc->isDeclaration()) {
                     // if it was an allocation function, we would've found it by now
                     // maybe i can still model some common ones here?
+                    ASSERT_ELSE_UNKOWN(!calledFunc->isIntrinsic(), calledFunc);
+                    ASSERT_ELSE_UNKOWN(!calledFunc->returnDoesNotAlias(), calledFunc);
                     return false;
                 }
                 // check if all return values happen to be in bounds, if so we gucci
