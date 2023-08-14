@@ -1034,7 +1034,12 @@ std::optional<PointerDetector::ValueType> PointerDetector::handle_unconfirmed_bi
             if (lhs == POINTER || lhs == NEGATED_POINTER) {
                 ASSERT_ELSE_UNKOWN(rhs == INTEGER, binaryOp);
                 auto rh = llvm::dyn_cast<llvm::ConstantInt>(binaryOp->getOperand(1));
-                ASSERT_ELSE_UNKOWN(rh && rh->getValue().abs() == 1, binaryOp);
+                ASSERT_ELSE_UNKOWN(rh, binaryOp);
+                // SPEC2017 perlbench multiplies a pointer with -4294967295, and the result ends up through shifts as a "string length" parameter
+                // SPEC2017 gcc does a similar thing, with a different constant. I think its "Knuth's multiplicative hash algorithm" to hash a pointer val
+                // either way, the result is an integer
+                if (rh->getValue().abs() != 1)
+                    return INTEGER;
                 return lhs;
             } else if (rhs == POINTER || rhs == NEGATED_POINTER) {
                 ASSERT_ELSE_UNKOWN(lhs == INTEGER, binaryOp);
