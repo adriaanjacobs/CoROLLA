@@ -558,9 +558,15 @@ const llvm::DenseMap<llvm::StringRef, std::function<llvm::APInt(AllocWrapperDete
     {"_Znwm", [] (AllocWrapperDetector* self, llvm::CallBase* call) -> llvm::APInt {
         return self->sizeOfMallocLike(call);
     }},	// new
+    {"_ZnwmRKSt9nothrow_t", [] (AllocWrapperDetector* self, llvm::CallBase* call) -> llvm::APInt {
+        return self->sizeOfMallocLike(call);
+    }}, // non-throwing new
     {"_Znam", [] (AllocWrapperDetector* self, llvm::CallBase* call) -> llvm::APInt {
         return self->sizeOfMallocLike(call);
     }},	// new []
+    {"_ZnamRKSt9nothrow_t", [] (AllocWrapperDetector* self, llvm::CallBase* call) -> llvm::APInt {
+        return self->sizeOfMallocLike(call);
+    }}, // non-throwing new []
     {"_Znaj", nullptr},	// new
     {"_Znwj", nullptr},	// new []
     {"__cxa_allocate_exception", [] (AllocWrapperDetector* self, llvm::CallBase* call) -> llvm::APInt {
