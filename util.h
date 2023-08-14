@@ -9,31 +9,6 @@
 #include <string>
 #include <map>
 
-#if 0
-#ifndef BOOST_STACKTRACE_USE_BACKTRACE
-    #define BOOST_STACKTRACE_USE_BACKTRACE
-#endif
-
-#include <boost/stacktrace.hpp>
-
-#include <source_location>
-#include <llvm/Support/raw_ostream.h>
-#include <signal.h>
-
-#define dbg_assert(expr) \
-    if (!static_cast<bool>(expr)) { \
-        llvm::outs().flush();   \
-        llvm::outs().flush();   \
-        std::cout.flush();  \
-        std::cerr.flush();  \
-        std::cerr << __FILE__ << ":" << __LINE__ << ": " << __func__ << ": Assertion `" << #expr << "` failed.\n"; \
-        std::cerr << "Backtrace: \n";   \
-        std::cerr << boost::stacktrace::stacktrace();   \
-        std::cerr << std::endl; \
-        raise(SIGABRT); \
-    }
-#endif
-
 #include <functional>
 #include <llvm/IR/Operator.h>
 #include <optional>
