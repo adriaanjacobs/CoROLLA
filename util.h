@@ -26,6 +26,7 @@ inline void dumpModuleToFile(llvm::Module& module, std::string_view name) {
     llvm::raw_fd_ostream file(name, code);
     assert(code.value() == 0);
     module.print(file, nullptr);
+    llvm::outs() << "Dumped module to '" << name << "' for debugging.\n";
 }
 
 // adapted from 'getModuleFromVal' in LLVM's AsmWriter.cpp
@@ -72,9 +73,7 @@ inline llvm::Function* functionOf(llvm::Value* val) {
 #define HANDLE_UNKOWN_VALUE(val)                                                                                \
     do {                                                                                                        \
         if (llvm::Module* _module__ = moduleOf(val)) {                                                          \
-            const char* filename = "currentmodule.atUnknownValue.debug.ll";                                     \
-            dumpModuleToFile(*_module__, filename);                                                             \
-            llvm::outs() << "Printed module to '" << filename << "' for debugging!\n";                          \
+            dumpModuleToFile(*_module__, "currentmodule.atUnknownValue.debug.ll");                              \
             if (llvm::Function* _func__ = functionOf(val))                                                      \
                 llvm::outs() << "In func: '" << _func__->getName() << "'\n";                                    \
         }                                                                                                       \
