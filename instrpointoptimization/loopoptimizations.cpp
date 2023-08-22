@@ -141,7 +141,7 @@ void hoistLoopBoundMemAccesses(llvm::Module& module, llvm::ModuleAnalysisManager
                     assert(loop->getHeader());
 
                     // sanity check that mustExecute points are always hoistable!!
-                    bool hoistable = isHoistable(point);
+                    const bool hoistable = isHoistable(point);
                     {
                         llvm::MustBeExecutedContextExplorer explorer = getMustBeExecutedContextExplorer(FAM, true, false);
                         bool logMustExecute = explorer.findInContextOf(point->insertBefore, preheader->getTerminator());
@@ -174,7 +174,9 @@ void hoistLoopBoundMemAccesses(llvm::Module& module, llvm::ModuleAnalysisManager
                         if (auto addrec = llvm::dyn_cast<llvm::SCEVAddRecExpr>(operandScev)) {
                             operandDependsOnIV += !i;
                             // figure out the trip count & evaluate the addrec at that iteration
-                            auto backEdgeTakenScev = scev.getSCEVAtScope(scev.getBackedgeTakenCount(loop), loop);
+                            auto backEdgeTakenScev = scev.getBackedgeTakenCount(loop);
+                            if (!llvm::isa<llvm::SCEVCouldNotCompute>(backEdgeTakenScev))
+                                backEdgeTakenScev = scev.getSCEVAtScope(backEdgeTakenScev, loop);
                             if (llvm::isa<llvm::SCEVCouldNotCompute>(backEdgeTakenScev)) {
                                 cantComputeBackEdgeCount += !i;
                                 // pointer depends on IV but the loop's end condition does not. 
