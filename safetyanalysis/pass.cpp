@@ -57,7 +57,7 @@ UnsafeAccessFinderAnalysis::UnsafeAccessInfo::UnsafeAccessInfo(llvm::Module& mod
             bool opaqueglobal = false;
             if (llvm::isa<llvm::Constant>(stripOp)) {
                 assert(allocWrappers.isAllocationSite(stripOp));
-                if (auto allocSize = allocWrappers.findMinimumAllocSize(stripOp); allocSize.has_value() && allocSize == 0) {
+                if (auto allocBounds = allocWrappers.findMinimumAllocBounds(stripOp); allocBounds.has_value() && allocBounds == std::pair{llvm::APInt{64, 0}, llvm::APInt{64, 0}}) {
                     // this is an opaque global, do not instrument
                     opaqueglobal = true;
                 }

@@ -183,43 +183,32 @@ public:
             SVF::ExtAPI::extType type = EFT_NULL;
         };
 
-        bool isBuiltInAllocationSite(llvm::Value* val);
+        static bool isNonWrapperAllocSite(llvm::Value* val);
         bool isAllocationSite(llvm::Value* val);
-        bool isDynamicAllocationSite(llvm::Value* val);
+        bool isWrapperOrLibcCall(llvm::Value* val);
         llvm::StringRef getValueDescription(llvm::Value* val);
 
-        std::optional<llvm::APInt> findMinimumAllocSize(llvm::Value* allocInstr);
+        std::optional<std::pair<llvm::APInt, llvm::APInt>> findMinimumAllocBounds(llvm::Value* allocInstr);
 
         Detector(llvm::Module& module, llvm::ModuleAnalysisManager& MAM);
-        
-        static bool isStaticAllocationSite(llvm::Value* val);
-        static bool isBuiltInAllocationCall(llvm::Instruction* inst) {
-            if (isStaticAllocationSite(inst))
-                return true;
-            else if (auto callInst = llvm::dyn_cast<llvm::CallBase>(inst)) {
-                if (callInst->getCalledFunction() && isKnownLibcAllocator(callInst->getCalledFunction()))
-                    return true;
-            }
-            return false;
-        }
     private:
         llvm::Module& module;
         llvm::ModuleAnalysisManager& MAM;
         PointerDetector& pointerDetector;
         llvm::DenseMap<llvm::Function*, AllocWrapperInfo> allocFuncs;
 
-        llvm::APInt findMmapSize(llvm::CallBase* callInst);
-        llvm::APInt sizeOfReturnedPointeeType(llvm::CallBase* callInst);
-        llvm::APInt sizeOfMallocLike(llvm::CallBase* call);
+        std::pair<llvm::APInt, llvm::APInt> findMmapBounds(llvm::CallBase* callInst);
+        std::pair<llvm::APInt, llvm::APInt> boundsOfReturnedPointeeType(llvm::CallBase* callInst);
+        std::pair<llvm::APInt, llvm::APInt> boundsOfMallocLike(llvm::CallBase* call);
         enum struct AllocSiteStatus { NONE, NULLPTR, ALLOCSITE };
         AllocSiteStatus reducesToAllocationSite(llvm::Value* val, llvm::DenseSet<llvm::Value*>& allocSites);
 
-        static const llvm::DenseMap<llvm::StringRef, std::function<llvm::APInt(Detector*,llvm::CallBase*)>> builtinAllocToSize;
+        static const llvm::DenseMap<llvm::StringRef, std::function<std::pair<llvm::APInt, llvm::APInt>(Detector*,llvm::CallBase*)>> builtinLibcCallToBounds;
 
         std::optional<SVF::ExtAPI::extType> deriveExtFnTy(llvm::Value* val);
     public:
         const llvm::DenseMap<llvm::Function*, AllocWrapperInfo>& getAllocFuncs() { return allocFuncs; } 
-        static std::optional<decltype(builtinAllocToSize)::const_iterator> isKnownLibcAllocator(llvm::Function* func);
+        static std::optional<decltype(builtinLibcCallToBounds)::value_type::second_type> isKnownLibcAllocator(llvm::Function* func);
     };
 
     // Specify the result type of this analysis pass.

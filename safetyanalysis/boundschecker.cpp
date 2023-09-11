@@ -42,14 +42,14 @@ bool BoundsChecker::isInBounds(llvm::Value* offsetPtr, llvm::APInt storeSize) {
     auto& allocDetector = MAM.getResult<AllocWrapperAnalysis>(module);
 
     auto isInRange = [&] (llvm::Value* current, llvm::APInt offset, DIRECTION) -> std::optional<bool> {
-        if (allocDetector.isBuiltInAllocationSite(current)) {
+        if (allocDetector.isNonWrapperAllocSite(current)) {
             // these are other allocations, likely also in the points-to set of this pointer operand. 
-            auto allocSize = allocDetector.findMinimumAllocSize(current);
+            auto allocBounds = allocDetector.findMinimumAllocBounds(current);
 
-            if (!allocSize.has_value()) 
-                allocSize = llvm::APInt{64, 0};
+            if (!allocBounds.has_value()) 
+                return { false };
             
-            bool ret = offset.sge(0) && offset.sle(allocSize.value());
+            bool ret = offset.sge(allocBounds.value().first) && offset.sle(allocBounds.value().second);
             if (auto alloca = llvm::dyn_cast<llvm::AllocaInst>(current)) {
                 auto& stackSafety = MAM.getResult<llvm::StackSafetyGlobalAnalysis>(module);
                 if(stackSafety.isSafe(*alloca))

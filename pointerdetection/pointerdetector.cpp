@@ -28,7 +28,7 @@ void PointerDetector::identify_start_pointers(llvm::Module& module) {
     for (auto& func : module) {
         for (auto& bb : func) {
             for (auto& inst : bb) {
-                if (AllocWrapperDetector::isBuiltInAllocationCall(&inst))
+                if (AllocWrapperDetector::isNonWrapperAllocSite(&inst))
                     mark_value(&inst, POINTER);
 
                 if (inst.mayReadOrWriteMemory()) {
@@ -168,9 +168,9 @@ llvm::Value* PointerDetector::strip_pointer_casts(llvm::Value *pointer) const {
         } else if (auto freeze = llvm::dyn_cast<llvm::FreezeInst>(pointer)) {
             assert((!llvm::isa<llvm::UndefValue, llvm::PoisonValue>(freeze->getOperand(0))));
             pointer = freeze->getOperand(0);
-        } else if (AllocWrapperDetector::isStaticAllocationSite(pointer)
-                    || llvm::isa<llvm::ConstantPointerNull, llvm::ConstantInt, llvm::Function, llvm::LoadInst, 
-                                llvm::ExtractElementInst, llvm::Argument, llvm::CallBase, llvm::PHINode, llvm::SelectInst>(pointer)
+        } else if (llvm::isa<llvm::AllocaInst, llvm::GlobalVariable, llvm::ConstantPointerNull, llvm::ConstantInt, 
+                                llvm::Function, llvm::LoadInst, llvm::ExtractElementInst, llvm::Argument, 
+                                llvm::CallBase, llvm::PHINode, llvm::SelectInst>(pointer)
         ) {
             break;
         } else if (auto constExpr = llvm::dyn_cast<llvm::ConstantExpr>(pointer)) {
@@ -283,7 +283,7 @@ llvm::Value* PointerDetector::find_real_base(llvm::Value *arithmetic) const {
                 done = true;
             else 
                 current = commonbase;
-        } else if (allocDetector.isBuiltInAllocationSite(current) 
+        } else if (allocDetector.isNonWrapperAllocSite(current) 
                     || llvm::isa<llvm::ConstantPointerNull, llvm::UndefValue, llvm::LoadInst, llvm::ExtractValueInst,
                                 llvm::ExtractElementInst, llvm::Argument, llvm::CallBase, llvm::PHINode, llvm::SelectInst>(current)
         ) {
@@ -616,13 +616,9 @@ void PointerDetector::mark_pointer_origins(llvm::Value* pointer) {
                 toMark.push_back({def, POINTER});
             done = true;
             break;
-        } else if (AllocWrapperDetector::isStaticAllocationSite(current)
-                    || llvm::isa<llvm::CallBase>(current)
-                    || llvm::isa<llvm::Argument>(current)
-                    || llvm::isa<llvm::ConstantAggregate>(current)
-                    || llvm::isa<llvm::ConstantPointerNull>(current)
-                    || llvm::isa<llvm::ExtractElementInst>(current)
-                    || llvm::isa<llvm::UndefValue>(current)
+        } else if (llvm::isa<llvm::AllocaInst, llvm::GlobalVariable, llvm::CallBase, 
+                    llvm::Argument, llvm::ConstantAggregate, llvm::ConstantPointerNull, 
+                    llvm::ExtractElementInst, llvm::UndefValue>(current)
         ) {
             done = true;
             break;
