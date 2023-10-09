@@ -194,11 +194,14 @@ void hoistLoopBoundMemAccesses(llvm::Module& module, llvm::ModuleAnalysisManager
                                         assert(domTree.dominates(base, preheader->getTerminator()));
                                         point->insertBefore = preheader->getTerminator();
                                         point->pointerOperand = base;
+                                        ASSERT_ELSE_UNKOWN(exitPointer != base, exitPointer);
 
                                         // insert the log of the exit pointer
                                         // this is temporary, we can create a better packet format some day that doesn't skip over blocks
                                         assert(pointToInstructions.count(point));
-                                        pointsToInsert[new InstrumentationPoint(*point)] = pointToInstructions[point];
+                                        auto exitPoint = new InstrumentationPoint(*point);
+                                        exitPoint->pointerOperand = exitPointer;
+                                        pointsToInsert[exitPoint] = pointToInstructions[point];
                                         change = true;
                                     } else {
                                         unexpandableExitvalue += !i;
