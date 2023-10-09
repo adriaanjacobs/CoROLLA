@@ -101,7 +101,7 @@ void hoistLoopBoundMemAccesses(llvm::Module& module, llvm::ModuleAnalysisManager
                     // are any of the function exits reachable from the preheader without logging the evidence?
                     // if not -> we can safely log the evidence from the preheader
                     auto anyTermReachable = llvm::any_of(funcTerminators, [&] (llvm::Instruction* term) -> bool {
-                        return ::isPotentiallyReachable(&preheader->front(), term, exclusionSet, &domTree, &loopInfo);
+                        return !exclusionSet.contains(&preheader->front()) && ::isPotentiallyReachable(&preheader->front(), term, exclusionSet, &domTree, &loopInfo);
                     });
                     if (!anyTermReachable) {
                         // we can safely log this evidence in the preheader
