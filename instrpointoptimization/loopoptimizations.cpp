@@ -14,7 +14,7 @@ llvm::Value* tryExpandSCEV(llvm::Module& module, llvm::ModuleAnalysisManager& MA
         return scevUnkown->getValue();
     auto& domTree = getFAM(module, MAM).getResult<llvm::DominatorTreeAnalysis>(*insertBefore->getFunction());
     auto& scev = getFAM(module, MAM).getResult<llvm::ScalarEvolutionAnalysis>(*insertBefore->getFunction());
-    if (llvm::isa<llvm::SCEVAddExpr, llvm::SCEVAddRecExpr>(scevVal)) {
+    if (llvm::isa<llvm::SCEVAddExpr, llvm::SCEVAddRecExpr, llvm::SCEVUMinExpr, llvm::SCEVUMaxExpr>(scevVal)) {
         // that's okay
         llvm::SCEVExpander expander{scev, module.getDataLayout(), "MySCEVExpander"};
         auto value = expander.expandCodeFor(scevVal, expandedTy, insertBefore);

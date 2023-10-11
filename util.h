@@ -75,16 +75,16 @@ inline llvm::Function* functionOf(llvm::Value* val) {
         if (llvm::Module* _module__ = moduleOf(val)) {                                                          \
             dumpModuleToFile(*_module__, "currentmodule.atUnknownValue.debug.ll");                              \
             if (llvm::Function* _func__ = functionOf(val))                                                      \
-                llvm::outs() << "In func: '" << _func__->getName() << "'\n";                                    \
+                llvm::errs() << "In func: '" << _func__->getName() << "'\n";                                    \
         }                                                                                                       \
-        llvm::outs() << "Unkown value type: \n";                                                                \
-        llvm::outs() << "\t" << *val << "\n\n";                                                                 \
-        llvm::outs() << "Is constant: " << (llvm::isa<llvm::Constant>(val) ? "yes" : "no") << "\n";             \
-        llvm::outs() << "Is GlobalVariable: " << (llvm::isa<llvm::GlobalVariable>(val) ? "yes" : "no") << "\n"; \
-        llvm::outs() << "Is ConstantData: " << (llvm::isa<llvm::ConstantData>(val) ? "yes" : "no") << "\n";     \
-        llvm::outs() << "Is instruction: " << (llvm::isa<llvm::Instruction>(val) ? "yes" : "no") << "\n";       \
-        llvm::outs() << "Is operator: " << (llvm::isa<llvm::Operator>(val) ? "yes" : "no") << "\n";             \
-        llvm::outs().flush();                                                                                   \
+        llvm::errs() << "Unkown value type: \n";                                                                \
+        llvm::errs() << "\t" << *val << "\n\n";                                                                 \
+        llvm::errs() << "Is constant: " << (llvm::isa<llvm::Constant>(val) ? "yes" : "no") << "\n";             \
+        llvm::errs() << "Is GlobalVariable: " << (llvm::isa<llvm::GlobalVariable>(val) ? "yes" : "no") << "\n"; \
+        llvm::errs() << "Is ConstantData: " << (llvm::isa<llvm::ConstantData>(val) ? "yes" : "no") << "\n";     \
+        llvm::errs() << "Is instruction: " << (llvm::isa<llvm::Instruction>(val) ? "yes" : "no") << "\n";       \
+        llvm::errs() << "Is operator: " << (llvm::isa<llvm::Operator>(val) ? "yes" : "no") << "\n";             \
+        llvm::errs().flush();                                                                                   \
         assert(!"Unkown instruction!");                                                                         \
     } while (false)
 
@@ -109,8 +109,8 @@ constexpr std::array scevTypesToString = std::experimental::make_array(
 
 #define PRINT_UNKOWN_SCEV(scev) \
     do {    \
-        llvm::outs() << "Unkown scev with type '" << scevTypesToString[scev->getSCEVType()] << "':\n";   \
-        llvm::outs() << "\t" << *scev << "\n";   \
+        llvm::errs() << "Unkown scev with type '" << scevTypesToString[scev->getSCEVType()] << "':\n";   \
+        llvm::errs() << "\t" << *scev << "\n";   \
     } while (false) 
 
 #define HANDLE_UNKOWN_SCEV(scev) \
@@ -331,8 +331,8 @@ inline llvm::SmallVector<llvm::Function*> getKnownCallees(llvm::CallBase* call) 
 }
 
 /*
-    Returns insertionPts suitable for placing instrumentation after CallBase instructions.
-    Returns 2 locations for invokes: normal path & exceptional path
+    Returns an insertion point suitable for placing instrumentation after CallBase instructions.
+    For invokes, returns the normal destination (where the return value makes sense)
 */
 inline llvm::Instruction* normalInsertionPtAfter(llvm::Instruction* inst) {
     if (auto invoke = llvm::dyn_cast<llvm::InvokeInst>(inst)) {
