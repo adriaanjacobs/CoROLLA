@@ -78,48 +78,106 @@ void hoistLoopBoundMemAccesses(llvm::Module& module, llvm::ModuleAnalysisManager
 
         do {
             change = false;
-            // first, we do the split-postdom preheader check, to maximally hoist non-mustExecute points
-            llvm::DenseMap<llvm::Value*, llvm::DenseSet<InstrumentationPoint*>> ptrToPoints;
-            for (auto& [point, _] : pointToInstructions) 
-                ptrToPoints[pointerDetector.strip_pointer_casts(point->pointerOperand)].insert(point);
 
             auto& loopInfo = FAM.getResult<llvm::LoopAnalysis>(*func);
             auto& domTree = FAM.getResult<llvm::DominatorTreeAnalysis>(*func);
-            llvm::DenseMap<llvm::Loop*, llvm::DenseSet<InstrumentationPoint*>> hoistablePoints;
-            for (auto& [_, ptrPoints] : ptrToPoints) {
-                llvm::DenseSet<llvm::Instruction*> exclusionSet;
-                for (auto point : ptrPoints)
-                    exclusionSet.insert(point->insertBefore);
-                
-                llvm::DenseMap<llvm::Loop*, llvm::DenseSet<InstrumentationPoint*>> loopBoundPoints;
-                for (auto point : ptrPoints)
-                    if (auto loop = loopInfo.getLoopFor(point->insertBefore->getParent()))
-                        loopBoundPoints[loop].insert(point);
-                
-                for (auto& [loop, loopPoints] : loopBoundPoints) {
-                    assert(!loopPoints.empty());
-                    auto preheader = loop->getLoopPreheader();
-                    assert(!funcTerminators.empty());
-                    // are any of the function exits reachable from the preheader without logging the evidence?
-                    // if not -> we can safely log the evidence from the preheader
-                    auto anyTermReachable = llvm::any_of(funcTerminators, [&] (llvm::Instruction* term) -> bool {
-                        return !exclusionSet.contains(&preheader->front()) && ::isPotentiallyReachable(&preheader->front(), term, exclusionSet, &domTree, &loopInfo);
-                    });
-                    if (!anyTermReachable) {
-                        // we can safely log this evidence in the preheader
-                        // only log this evidence once: erase all except 1 from the func points
-                        assert(!loopPoints.empty());
-                        llvm::DenseSet<llvm::Instruction*> insts;
-                        for (auto point : loopPoints) {
-                            for (auto inst : pointToInstructions[point])
-                                insts.insert(inst);
-                            pointToInstructions.erase(point);
+            
+            { // delete split-dominated points
+                // we do this earlier as well, but these loop-transformations might re-introduce cases
+
+                llvm::DenseMap<llvm::Value*, llvm::DenseSet<InstrumentationPoint*>> ptrToPoints;
+                for (auto& [point, _] : pointToInstructions) 
+                    ptrToPoints[pointerDetector.strip_pointer_casts(point->pointerOperand)].insert(point);
+                for (auto& [_, points] : ptrToPoints) {
+                    // it's possible that the summarization transformation resulted in the logging of the same evidence at the same location
+                    // fix up places where that happened
+
+                    llvm::DenseMap<llvm::Instruction*, llvm::DenseSet<InstrumentationPoint*>> insertBfToPoints;
+                    for (auto point : points)
+                        insertBfToPoints[point->insertBefore].insert(point);
+                    
+                    for (auto& [insertBefore, points] : insertBfToPoints) {
+                        // use the first point for all relevant instructions
+                        for (auto it = std::next(points.begin()); it != points.end(); ) {
+                            assert(pointToInstructions.count(*it));
+                            auto instsTracked = pointToInstructions[*it];
+                            assert(pointToInstructions.count(*points.begin()));
+                            pointToInstructions[*points.begin()].insert(instsTracked.begin(), instsTracked.end());
+                            pointToInstructions.erase(*it);
+                            points.erase(it++);
+                            change = true;
                         }
-                        for (auto inst : insts)
-                            pointToInstructions[*loopPoints.begin()].insert(inst);
-                        hoistablePoints[loop].insert(*loopPoints.begin());
+
+                        assert(points.size() == 1);
+                    }
+
+                    // no location contains multiple logs of the same evidence
+
+                    // is it possible to reach each point from the function entry without passing through any of the other points?
+                    llvm::DenseSet<llvm::Instruction*> exclusionSet;
+                    for (auto point : points)
+                        exclusionSet.insert(point->insertBefore);
+                    auto funcStart = &func->getEntryBlock().front();
+                    // if any of the points is the function start, it should be the only point
+                    if (exclusionSet.contains(funcStart)) {
+                        assert(points.size() == 1);
+                    } else {
+                        for (auto point : points) {
+                            bool erased = exclusionSet.erase(point->insertBefore);
+                            assert(erased);
+                            if (!::isPotentiallyReachable(funcStart, point->insertBefore, exclusionSet, &domTree, &loopInfo)) {
+                                // point is not reachable, delete it
+                                pointToInstructions.erase(point);
+                                change = true;
+                            }
+                            exclusionSet.insert(point->insertBefore);
+                        }
                     }
                 }
+            }
+
+            llvm::DenseMap<llvm::Loop*, llvm::DenseSet<InstrumentationPoint*>> hoistablePoints;
+            { // then, we do the split-postdom preheader check, to maximally hoist non-mustExecute points
+                llvm::DenseMap<llvm::Value*, llvm::DenseSet<InstrumentationPoint*>> ptrToPoints;
+                for (auto& [point, _] : pointToInstructions) 
+                    ptrToPoints[pointerDetector.strip_pointer_casts(point->pointerOperand)].insert(point);
+                
+                for (auto& [_, ptrPoints] : ptrToPoints) {
+                    llvm::DenseSet<llvm::Instruction*> exclusionSet;
+                    for (auto point : ptrPoints)
+                        exclusionSet.insert(point->insertBefore);
+
+                    llvm::DenseMap<llvm::Loop*, llvm::DenseSet<InstrumentationPoint*>> loopBoundPoints;
+                    for (auto point : ptrPoints)
+                        if (auto loop = loopInfo.getLoopFor(point->insertBefore->getParent()))
+                            loopBoundPoints[loop].insert(point);
+                    
+                    for (auto& [loop, loopPoints] : loopBoundPoints) {
+                        assert(!loopPoints.empty());
+                        auto preheader = loop->getLoopPreheader();
+                        assert(!funcTerminators.empty());
+                        // are any of the function exits reachable from the preheader without logging the evidence?
+                        // if not -> we can safely log the evidence from the preheader
+                        auto anyTermReachable = llvm::any_of(funcTerminators, [&] (llvm::Instruction* term) -> bool {
+                            return !exclusionSet.contains(&preheader->front()) && ::isPotentiallyReachable(&preheader->front(), term, exclusionSet, &domTree, &loopInfo);
+                        });
+                        if (!anyTermReachable) {
+                            // we can safely log this evidence in the preheader
+                            // only log this evidence once: erase all except 1 from the func points
+                            assert(!loopPoints.empty());
+                            llvm::DenseSet<llvm::Instruction*> insts;
+                            for (auto point : loopPoints) {
+                                for (auto inst : pointToInstructions[point])
+                                    insts.insert(inst);
+                                pointToInstructions.erase(point);
+                            }
+                            for (auto inst : insts)
+                                pointToInstructions[*loopPoints.begin()].insert(inst);
+                            hoistablePoints[loop].insert(*loopPoints.begin());
+                        }
+                    }
+                }
+
             }
 
             auto isHoistable = [&] (InstrumentationPoint* point) -> bool {
@@ -130,6 +188,7 @@ void hoistLoopBoundMemAccesses(llvm::Module& module, llvm::ModuleAnalysisManager
                 return hoistablePoints[loop].contains(point);
             };
 
+            // then, we do the more classic summarization and IV-independent hoisting
             llvm::DenseMap<InstrumentationPoint*, llvm::DenseSet<llvm::Instruction*>> pointsToInsert;
             llvm::DenseSet<InstrumentationPoint*> ivIndependentPoints;
             for (auto& [point, _] : pointToInstructions) {
@@ -190,9 +249,6 @@ void hoistLoopBoundMemAccesses(llvm::Module& module, llvm::ModuleAnalysisManager
                                         lowerScev = scev.getUMinExpr(lowerScev, upperScev);
                                         upperScev = scev.getUMaxExpr(addrec->getStart(), upperScev);
                                     }
-
-                                    ASSERT_ELSE_UNKOWN_SCEV(scev.isLoopInvariant(lowerScev, loop), lowerScev);
-                                    ASSERT_ELSE_UNKOWN_SCEV(scev.isLoopInvariant(upperScev, loop), upperScev);
 
                                     // now, lowerScev < upperScev
                                     auto lowerVal = tryExpandSCEV(module, MAM, lowerScev, llvm::Type::getInt8PtrTy(context, llvm::cast<llvm::PointerType>(point->pointerOperand->getType())->getAddressSpace()), preheader->getTerminator());
@@ -259,14 +315,14 @@ void hoistLoopBoundMemAccesses(llvm::Module& module, llvm::ModuleAnalysisManager
             i++;
         } while (change);
 
-        auto oldNumInsts = instPoints.size();
+        // update the output parameter with the new instpoints
         instPoints.clear();
         for (auto& [point, insts] : pointToInstructions)
             for (auto inst : insts)
                 instPoints[inst].insert(point);
         
-        // I think the number of described accesses should not change!
-        assert(oldNumInsts == instPoints.size());
+        // the number of described instructions can be different here than originally,
+        // because the split-dom check might remove logs entirely
     }
 
 #if DEBUG_IV_INDEPENDENT_LOGS
