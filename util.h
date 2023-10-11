@@ -107,12 +107,25 @@ constexpr std::array scevTypesToString = std::experimental::make_array(
   "scCouldNotCompute"
 );
 
-#define HANDLE_UNKOWN_SCEV(scev) \
+#define PRINT_UNKOWN_SCEV(scev) \
     do {    \
         llvm::outs() << "Unkown scev with type '" << scevTypesToString[scev->getSCEVType()] << "':\n";   \
         llvm::outs() << "\t" << *scev << "\n";   \
+    } while (false) 
+
+#define HANDLE_UNKOWN_SCEV(scev) \
+    do {    \
+        PRINT_UNKOWN_SCEV(scev); \
         assert(!"Unknown SCEV type!");  \
     } while (false) 
+
+#define ASSERT_ELSE_UNKOWN_SCEV(cond, scev)     \
+    do {                                        \
+        bool condVal = static_cast<bool>(cond); \
+        if (!condVal) {                         \
+            HANDLE_UNKOWN_SCEV(scev);           \
+        }                                       \
+    } while (false)
 
 #define ASSERT_ELSE_UNKOWN(cond, val)           \
     do {                                        \

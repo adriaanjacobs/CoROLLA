@@ -10,9 +10,11 @@
 
 llvm::Value* tryExpandSCEV(llvm::Module& module, llvm::ModuleAnalysisManager& MAM, const llvm::SCEV* scevVal, llvm::Type* expandedTy, llvm::Instruction* insertBefore) {
     assert(!llvm::isa<llvm::SCEVCouldNotCompute>(scevVal));
+    if (auto scevUnkown = llvm::dyn_cast<llvm::SCEVUnknown>(scevVal))
+        return scevUnkown->getValue();
     auto& domTree = getFAM(module, MAM).getResult<llvm::DominatorTreeAnalysis>(*insertBefore->getFunction());
     auto& scev = getFAM(module, MAM).getResult<llvm::ScalarEvolutionAnalysis>(*insertBefore->getFunction());
-    if (llvm::isa<llvm::SCEVAddExpr, llvm::SCEVAddRecExpr, llvm::SCEVUnknown>(scevVal)) {
+    if (llvm::isa<llvm::SCEVAddExpr, llvm::SCEVAddRecExpr>(scevVal)) {
         // that's okay
         llvm::SCEVExpander expander{scev, module.getDataLayout(), "MySCEVExpander"};
         auto value = expander.expandCodeFor(scevVal, expandedTy, insertBefore);
@@ -164,19 +166,10 @@ void hoistLoopBoundMemAccesses(llvm::Module& module, llvm::ModuleAnalysisManager
                     } else {
                         auto& scev = FAM.getResult<llvm::ScalarEvolutionAnalysis>(*func);
                         auto operandScev = scev.getSCEVAtScope(point->pointerOperand, loop);
-                        auto baseScev = scev.getPointerBase(operandScev);
-                        if (!llvm::isa<llvm::SCEVUnknown>(baseScev)) {
-                            llvm::outs() << "operandScev: " << *operandScev << "\n";
-                            llvm::outs() << "baseScev: " << *baseScev << "\n";
-                            HANDLE_UNKOWN_VALUE(point->pointerOperand);
-                        }
-
                         if (auto addrec = llvm::dyn_cast<llvm::SCEVAddRecExpr>(operandScev)) {
                             operandDependsOnIV += !i;
                             // figure out the trip count & evaluate the addrec at that iteration
                             auto backEdgeTakenScev = scev.getBackedgeTakenCount(loop);
-                            if (!llvm::isa<llvm::SCEVCouldNotCompute>(backEdgeTakenScev))
-                                backEdgeTakenScev = scev.getSCEVAtScope(backEdgeTakenScev, loop);
                             if (llvm::isa<llvm::SCEVCouldNotCompute>(backEdgeTakenScev)) {
                                 cantComputeBackEdgeCount += !i;
                                 // pointer depends on IV but the loop's end condition does not. 
@@ -184,23 +177,51 @@ void hoistLoopBoundMemAccesses(llvm::Module& module, llvm::ModuleAnalysisManager
                                 // if we can detect the loop's first & last iteration, we could optimize this
                             } else {
                                 if (hoistable) {
-                                    auto exitVal = addrec->evaluateAtIteration(backEdgeTakenScev, scev);
-                                    exitVal = scev.getSCEVAtScope(exitVal, loop);
-                                    if (auto exitPointer = tryExpandSCEV(module, MAM, exitVal, llvm::Type::getInt8PtrTy(context, llvm::cast<llvm::PointerType>(point->pointerOperand->getType())->getAddressSpace()), preheader->getTerminator())) {
+                                    // inspired by LLVM's RuntimePointerChecking::insert()
+                                    auto lowerScev = addrec->getStart();
+                                    auto upperScev = addrec->evaluateAtIteration(backEdgeTakenScev, scev);
+
+                                    // For expressions with negative step, the bounds are swapped
+                                    // if the step size is constant, it's simple
+                                    if (auto constStepScev = llvm::dyn_cast<llvm::SCEVConstant>(addrec->getStepRecurrence(scev))) {
+                                        if (constStepScev->getValue()->isNegative())
+                                            std::swap(lowerScev, upperScev);
+                                    } else { // non-constant step: use umin/umax to swap them around appropriately
+                                        lowerScev = scev.getUMinExpr(lowerScev, upperScev);
+                                        upperScev = scev.getUMaxExpr(addrec->getStart(), upperScev);
+                                    }
+
+                                    ASSERT_ELSE_UNKOWN_SCEV(scev.isLoopInvariant(lowerScev, loop), lowerScev);
+                                    ASSERT_ELSE_UNKOWN_SCEV(scev.isLoopInvariant(upperScev, loop), upperScev);
+
+                                    // now, lowerScev < upperScev
+                                    auto lowerVal = tryExpandSCEV(module, MAM, lowerScev, llvm::Type::getInt8PtrTy(context, llvm::cast<llvm::PointerType>(point->pointerOperand->getType())->getAddressSpace()), preheader->getTerminator());
+                                    auto upperVal = tryExpandSCEV(module, MAM, upperScev, llvm::Type::getInt8PtrTy(context, llvm::cast<llvm::PointerType>(point->pointerOperand->getType())->getAddressSpace()), preheader->getTerminator());
+
+                                    if (lowerVal && upperVal) {
                                         exitValueComputed += !i;
 
-                                        // insert the base
-                                        auto base = llvm::cast<llvm::SCEVUnknown>(baseScev)->getValue();
-                                        assert(domTree.dominates(base, preheader->getTerminator()));
+                                        if (lowerVal == upperVal && !backEdgeTakenScev->isZero()) {
+                                            // it _can_ happen (e.g. add64 in mbedtls' MPI code) that we end up with a single-iteration loop
+                                            // in that case, it's basically not a loop 
+                                            // we emit the evidence twice in this case, the next iteration's split-dominance check will remove one 
+                                            llvm::outs() << "operandScev: " << *addrec << "\n";
+                                            llvm::outs() << "backEdgeTakenScev: " << *backEdgeTakenScev << "\n";
+                                            llvm::outs() << "lowerScev: " << *lowerScev << "\n";
+                                            llvm::outs() << "upperScev: " << *upperScev << "\n";
+                                            llvm::outs() << "lowerVal == upperVal: " << *lowerVal << "\n";
+                                            ASSERT_ELSE_UNKOWN(lowerVal != upperVal, lowerVal);
+                                        }
+                                        
+                                        // insert the evidence for the lowerVal
                                         point->insertBefore = preheader->getTerminator();
-                                        point->pointerOperand = base;
-                                        ASSERT_ELSE_UNKOWN(exitPointer != base, exitPointer);
+                                        point->pointerOperand = lowerVal;
 
-                                        // insert the log of the exit pointer
+                                        // insert the evidence for the upperVal
                                         // this is temporary, we can create a better packet format some day that doesn't skip over blocks
                                         assert(pointToInstructions.count(point));
                                         auto exitPoint = new InstrumentationPoint(*point);
-                                        exitPoint->pointerOperand = exitPointer;
+                                        exitPoint->pointerOperand = upperVal;
                                         pointsToInsert[exitPoint] = pointToInstructions[point];
                                         change = true;
                                     } else {
