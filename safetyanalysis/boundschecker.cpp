@@ -180,6 +180,13 @@ bool BoundsChecker::isInBounds_internal(llvm::Value* offsetPtr, llvm::APInt offs
                 if (calledFunc->isDeclaration()) {
                     // if it was an allocation function, we would've found it by now
                     // maybe i can still model some common ones here?
+                    if (calledFunc->getIntrinsicID() == llvm::Intrinsic::load_relative) {
+                        // common case according to docs. E.g. h264ref 
+                        // let's not solve this until we find a benchmark where we need to
+                        if (!llvm::isa<llvm::Constant>(call->getArgOperand(1)))
+                            return false;
+                    }
+
                     ASSERT_ELSE_UNKOWN(!calledFunc->isIntrinsic(), calledFunc);
                     ASSERT_ELSE_UNKOWN(!calledFunc->returnDoesNotAlias(), calledFunc);
                     return false;
