@@ -489,7 +489,10 @@ const llvm::DenseMap<llvm::StringRef, std::function<std::pair<llvm::APInt, llvm:
     }},
     {"gnu_get_libc_version", nullptr},
     {"gnutls_check_version", nullptr},
-    {"localeconv", nullptr},
+    {"localeconv", [] (AllocWrapperDetector* self, llvm::CallBase* callInst) -> std::pair<llvm::APInt, llvm::APInt> {
+        // at least in glibc 2.31
+        return self->boundsOfReturnedPointeeType(callInst);
+    }},
     {"localtime", [] (AllocWrapperDetector* self, llvm::CallBase* callInst) -> std::pair<llvm::APInt, llvm::APInt> {
         return self->boundsOfReturnedPointeeType(callInst);
     }},
