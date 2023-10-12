@@ -423,27 +423,39 @@ bool BoundsChecker::isInBounds_internal(llvm::Value* offsetPtr, llvm::APInt offs
                 continue;
             } else {
                 auto& loopInfo = FAM.getResult<llvm::LoopAnalysis>(*phiNode->getFunction());
-                auto& funcscev = FAM.getResult<llvm::ScalarEvolutionAnalysis>(*phiNode->getFunction());
-                auto phiScev = funcscev.getSCEV(phiNode);
+                auto& SCEV = FAM.getResult<llvm::ScalarEvolutionAnalysis>(*phiNode->getFunction());
+                auto phiScev = SCEV.getSCEV(phiNode);
                 assert(phiScev);
                 if (auto loop = loopInfo.getLoopFor(phiNode->getParent())) {
-                    if (funcscev.hasComputableLoopEvolution(phiScev, loop)) {
+                    if (SCEV.hasComputableLoopEvolution(phiScev, loop)) {
                         assert(phiScev->getSCEVType() != llvm::scCouldNotCompute);
-                        auto baseScev = funcscev.getPointerBase(phiScev);
+                        auto baseScev = SCEV.getPointerBase(phiScev);
                         assert(baseScev);
                         assert(baseScev->getSCEVType() != llvm::scCouldNotCompute);
-                        assert(baseScev->getSCEVType() == llvm::scUnknown);
-                        auto offsetScev = funcscev.getMinusSCEV(phiScev, baseScev);
-                        assert(offsetScev && offsetScev->getSCEVType() != llvm::scCouldNotCompute);
-                        auto offsetVal = getSignedSCEVLimit<DIR>(offsetScev, funcscev);
-                        // there's an implicit assumption here that the pointer evolves via add's through the loop
-                        // maybe we can validate this somehow by checking the scevtype of "phiScev"
-                        // but I think this is guaranteed by the loopevolution definition
-                        if (offsetVal.has_value()) {
-                            offset += offsetVal.value();
-                            assert(llvm::isa<llvm::SCEVUnknown>(baseScev));
-                            current = llvm::cast<llvm::SCEVUnknown>(baseScev)->getValue();
-                            continue;
+                        if (baseScev->getSCEVType() != llvm::scUnknown) {
+                            assert(baseScev == phiScev);
+                            // some iterations (e.g., std::find with reverse iterator on std::vector) use an i64 instead of ptr
+                            // to iterate over the array. `getPointerBase` cannot deal with that, LLVM devs don't know how to solve it
+                            // https://github.com/llvm/llvm-project/issues/65743
+                            // we just bail out, I guess. I think leela_s or imagick_s triggered this
+                        } else {
+                            assert(baseScev->getSCEVType() == llvm::scUnknown);
+                            auto offsetScev = SCEV.getMinusSCEV(phiScev, baseScev);
+                            assert(offsetScev && offsetScev->getSCEVType() != llvm::scCouldNotCompute);
+                            auto offsetVal = getSignedSCEVLimit<DIR>(offsetScev, SCEV);
+                            // there's an implicit assumption here that the pointer evolves via add's through the loop
+                            // maybe we can validate this somehow by checking the scevtype of "phiScev"
+                            // but I think this is guaranteed by the loopevolution definition
+                            if (offsetVal.has_value()) {
+                                offset += offsetVal.value();
+                                if (!llvm::isa<llvm::SCEVUnknown>(baseScev)) {
+                                    llvm::outs() << "Unkown scev with type '" << scevTypesToString[baseScev->getSCEVType()] << "':\n";
+                                    llvm::outs() << "\t" << *baseScev << "\n";
+                                    HANDLE_UNKOWN_VALUE(phiNode);
+                                }
+                                current = llvm::cast<llvm::SCEVUnknown>(baseScev)->getValue();
+                                continue;
+                            }
                         }
                     }
 
