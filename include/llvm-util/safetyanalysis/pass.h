@@ -1,10 +1,7 @@
 #pragma once
 
-#include <util.h>
-#include <attestation/attestinstrument.h>
-#include <svfpass/svfpass.h>
-#include <svfpass/BreakConstantExpr.h>
-#include <pointerdetection/pointerdetection.h>
+#include <llvm-util/util.h>
+#include <llvm-util/pointerdetection/pointerdetection.h>
 
 #include <llvm/Pass.h>
 #include <llvm/IR/IRPrintingPasses.h>

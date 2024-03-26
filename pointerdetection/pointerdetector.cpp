@@ -1,8 +1,8 @@
-#include "pointerdetection.h"
+#include <llvm-util/pointerdetection/pointerdetection.h>
 
-#include <util.h>
-#include <safetyanalysis/pass.h>
-#include <reachability/reachingdefinitions.h>
+#include <llvm-util/util.h>
+#include <llvm-util/safetyanalysis/pass.h>
+#include <llvm-util/reachability/reachingdefinitions.h>
 
 #include <llvm/IR/Constants.h>
 #include <llvm/IR/Instructions.h>

@@ -205,7 +205,6 @@ void UnsafeAccessFinderAnalysis::UnsafeAccessInfo::pruneDominatedAccesses(llvm::
 }
 
 llvm::PreservedAnalyses MemAccessInstrumentator::run(llvm::Module &module, llvm::ModuleAnalysisManager &mam) {
-    // SVF::LLVMModuleSet::getLLVMModuleSet()->buildSVFModule(module);
 
     // If the results are not yet available, because no other pass requested
     // them until now, they will be computed on-the-fly.

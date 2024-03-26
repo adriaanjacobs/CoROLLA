@@ -5,9 +5,6 @@
 
 
 llvm::PreservedAnalyses SafeFunctionClonerPass::run(llvm::Module& module, llvm::ModuleAnalysisManager& MAM) {
-    // have to do it
-    // SVF::LLVMModuleSet::getLLVMModuleSet()->buildSVFModule(module);
-
     auto& gepdetector = MAM.getResult<GepDetectionAnalysis>(module);
     auto boundsChecker = MAM.getCachedResult<IsInBoundsAnalysis>(module);
     assert(boundsChecker && "GepDetectionAnalysis should have filled the bounds checker!");
