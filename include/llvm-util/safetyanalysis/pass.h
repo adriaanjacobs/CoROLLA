@@ -84,8 +84,7 @@ public:
 
         llvm::DenseSet<llvm::Instruction *> unsafeAccesses;
     private: 
-        void pruneDominatedAccesses(llvm::Module& module, llvm::ModuleAnalysisManager& FAM, llvm::DenseSet<llvm::Instruction*>& loadAndStores);
-        static std::pair<size_t, bool> find_allocSize(const llvm::DataLayout& dataLayout, const llvm::Value* const allocInstr);
+        void pruneDominatedAccesses(llvm::Module& module, llvm::ModuleAnalysisManager& MAM, llvm::DenseSet<llvm::Instruction*>& instrumentedInsts);
     };
     
     explicit UnsafeAccessFinderAnalysis() = default;

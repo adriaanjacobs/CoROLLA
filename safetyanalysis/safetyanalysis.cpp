@@ -36,103 +36,91 @@ UnsafeAccessFinderAnalysis::UnsafeAccessInfo::UnsafeAccessInfo(llvm::Module& mod
 
     auto& FAM = getFAM(module, MAM);
 
-    llvm::DenseSet<llvm::Value*> pointerOperands;
-    llvm::DenseSet<llvm::Value*>  instrumentedPointerOperands;
-    
+    llvm::DenseMap<llvm::Value*, llvm::DenseMap<size_t, llvm::DenseSet<llvm::Instruction*>>> ptrToTypeSizeToInstructions;    
     const llvm::DataLayout& dataLayout = module.getDataLayout();
     auto& sillyPerls = MAM.getResult<SillyPerlAnalysis>(module);
+    auto& pointerDetector = MAM.getResult<PointerDetectionAnalysis>(module);
+    size_t totalMemAccesses = 0;
     for (auto &function : module) {
         for (auto &basicblock : function) {
             for (auto& instr : basicblock) {
                 if ((!onlyStores && llvm::isa<llvm::LoadInst>(&instr)) || llvm::isa<llvm::StoreInst>(&instr)) {
                     // maybe add strippointercasts here? or my own stippointercasts?
-                    auto operand = llvm::getLoadStorePointerOperand(&instr);
-                    assert(operand);
-                    if (!sillyPerls.contains(&instr))
-                        pointerOperands.insert(operand);
+                    auto ptr = llvm::getLoadStorePointerOperand(&instr);
+                    assert(ptr);
+
+                    auto stripOp = pointerDetector.strip_pointer_casts(ptr);
+                    bool opaqueglobal = false;
+                    if (llvm::isa<llvm::Constant>(stripOp)) {
+                        assert(isNonWrapperAllocSite(stripOp));
+                        if (auto allocBounds = findMinimumAllocBounds(stripOp, module, MAM); allocBounds.has_value() && allocBounds == std::pair{llvm::APInt{64, 0}, llvm::APInt{64, 0}}) {
+                            // this is an opaque global, do not instrument
+                            opaqueglobal = true;
+                        }
+                    }
+
+                    auto loadStoreType = llvm::isa<llvm::LoadInst>(&instr) ? instr.getType() : llvm::dyn_cast<llvm::StoreInst>(&instr)->getValueOperand()->getType();
+                    auto loadStoreSize = dataLayout.getTypeStoreSize(loadStoreType).getFixedSize();
+                    if (!opaqueglobal && !sillyPerls.contains(&instr)) {
+                        totalMemAccesses++;
+                        ptrToTypeSizeToInstructions[ptr][loadStoreSize].insert(&instr);
+                    }
                 }
             }
         }
     }
 
+    size_t numQueries = [&]  {
+        size_t ret = 0;
+        for (auto& [ptr, offsets] : ptrToTypeSizeToInstructions)
+            ret += offsets.size();
+        return ret;
+    } ();
+
     uint64_t progress = 0;
-    uint64_t unit = pointerOperands.size()/100;
+    uint64_t unit = ptrToTypeSizeToInstructions.size()/100;
     if (unit == 0) unit = 1;
 
-    llvm::outs() << "Size of loadAndStores: " << pointerOperands.size() << ", reporting every " << unit << " iterations.\n";
+    llvm::outs() << "Running " << numQueries << " queries for " << ptrToTypeSizeToInstructions.size() << " unique pointers. Reporting every " << unit << " iterations.\n";
 
     auto& boundschecker = MAM.getResult<IsInBoundsAnalysis>(module);
-    auto& pointerDetector = MAM.getResult<PointerDetectionAnalysis>(module);
-    for (auto operand : pointerOperands) {
-        auto loadStoreSize = dataLayout.getTypeStoreSize(operand->getType()->getPointerElementType());
-        assert(loadStoreSize > 0 && loadStoreSize <= UINT64_MAX);
-        llvm::APInt operandSize{64, loadStoreSize, false}; 
-        if (!boundschecker.isInBounds(operand, operandSize)) {
-            ASSERT_ELSE_UNKOWN(!llvm::isa<llvm::Constant>(operand), operand);
-            auto stripOp = pointerDetector.strip_pointer_casts(operand);
-            bool opaqueglobal = false;
-            if (llvm::isa<llvm::Constant>(stripOp)) {
-                assert(isNonWrapperAllocSite(stripOp));
-                if (auto allocBounds = findMinimumAllocBounds(stripOp, module, MAM); allocBounds.has_value() && allocBounds == std::pair{llvm::APInt{64, 0}, llvm::APInt{64, 0}}) {
-                    // this is an opaque global, do not instrument
-                    opaqueglobal = true;
-                }
+    llvm::DenseSet<llvm::Instruction*> instrumentedInsts;
+    for (const auto& [ptr, offsets] : ptrToTypeSizeToInstructions) {
+        for (const auto& [loadStoreSize, insts] : offsets) {
+            assert(loadStoreSize > 0 && loadStoreSize <= UINT64_MAX);
+            llvm::APInt operandSize{64, loadStoreSize, false}; 
+            if (!boundschecker.isInBounds(ptr, operandSize)) {
+                ASSERT_ELSE_UNKOWN(!llvm::isa<llvm::Constant>(ptr), ptr);
+                for (const auto& inst : insts)
+                    instrumentedInsts.insert(inst);
             }
-            if (!opaqueglobal)
-                instrumentedPointerOperands.insert(operand);
-        }
 
-        progress++;
-        if ((progress % unit) == 0) {
-            llvm::outs() << 100*progress/pointerOperands.size() << "%\n";
+            progress++;
+            if ((progress % unit) == 0) {
+                llvm::outs() << 100*progress/numQueries << "%\n";
+            }
         }
     }
     
-    size_t intraProcedurallyPruned = pointerOperands.size() - instrumentedPointerOperands.size();
-    llvm::outs() << "Out of " << pointerOperands.size() << " pointer operands, we proved that " << intraProcedurallyPruned << " operands are safe (" << 100.0f*intraProcedurallyPruned/pointerOperands.size() << "%)\n";
+    size_t intraProcedurallyPruned = totalMemAccesses - instrumentedInsts.size();
+    llvm::outs() << "Out of " << totalMemAccesses << " memory accesses, we proved that " << intraProcedurallyPruned << " are safe (" << 100.0f*intraProcedurallyPruned/totalMemAccesses << "%)\n";
 
-    for (auto& op : instrumentedPointerOperands) {
-        assert(op != nullptr);
-    }
+    pruneDominatedAccesses(module, MAM, instrumentedInsts);
 
-    size_t totalMemAccesses = 0;
-
-    llvm::DenseSet<llvm::Instruction*> loadAndStores;
-    for (auto& func : module) {
-        for (auto& bb : func) {
-            for (auto& inst : bb) {
-                if (onlyStores && !llvm::isa<llvm::StoreInst>(&inst))
-                    continue;
-
-                auto pointerOperand = llvm::getLoadStorePointerOperand(&inst);
-                if (pointerOperand != nullptr)
-                    totalMemAccesses++;
-                if (instrumentedPointerOperands.contains(pointerOperand)) {
-                    loadAndStores.insert(&inst);
-                }
-            }
-        }
-    }
-
-    size_t pruned = totalMemAccesses - loadAndStores.size();
-    llvm::outs() << "Our first analysis pruned " << pruned << " out of " << totalMemAccesses << " memaccesses (" << (100.0f*(float)pruned/(float)totalMemAccesses) << "%)\n";
-
-    pruneDominatedAccesses(module, MAM, loadAndStores);
-
-    pruned = totalMemAccesses - loadAndStores.size();
+    size_t pruned = totalMemAccesses - instrumentedInsts.size();
     llvm::outs() << "In total, we pruned " << pruned << " out of " << totalMemAccesses << " memaccesses (" << (100.0f*(float)pruned/(float)totalMemAccesses) << "%)\n";
 
     // sanity checking
-    for (auto inst : loadAndStores) {
+    for (auto inst : instrumentedInsts) {
         auto operand = llvm::getLoadStorePointerOperand(inst);
         auto stripOp = pointerDetector.strip_pointer_casts(operand);
         ASSERT_ELSE_UNKOWN(!llvm::isa<llvm::Constant>(stripOp), inst);
     }
 
     if (onlyStores)
-        for (auto store : loadAndStores)
+        for (auto store : instrumentedInsts)
             assert(llvm::isa<llvm::StoreInst>(store));
-    unsafeAccesses = loadAndStores;
+    unsafeAccesses = instrumentedInsts;
 
     for (auto access : unsafeAccesses) 
         access->setMetadata("unsafe", llvm::MDNode::get(access->getContext(), llvm::None));

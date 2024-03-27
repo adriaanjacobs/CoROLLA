@@ -33,7 +33,7 @@ std::optional<std::pair<llvm::APInt, llvm::APInt>> findMinimumAllocBounds(llvm::
         ASSERT_ELSE_UNKOWN(size >= 0, allocInstr); // gcc's `combine_givs` does `alloca(0)` and LLVM is happy with it
         return std::pair{llvm::APInt{64, 0}, llvm::APInt{64, size, true}};
     } else if (auto globalVariable = llvm::dyn_cast<llvm::GlobalVariable>(allocInstr)) {
-        auto size = dataLayout.getTypeAllocSize(globalVariable->getType()->getPointerElementType());
+        auto size = dataLayout.getTypeAllocSize(globalVariable->getValueType());
         ASSERT_ELSE_UNKOWN(size > 0, allocInstr);
         return std::pair{llvm::APInt{64, 0}, llvm::APInt{64, size, true}};
     } else if (auto callInst = llvm::dyn_cast<llvm::CallBase>(allocInstr)) {
