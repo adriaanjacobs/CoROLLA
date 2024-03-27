@@ -1,6 +1,6 @@
 #pragma once
 
-#include <llvm-util/util.h>
+#include <llvm-utils/util.h>
 #include <clang/Basic/LangStandard.h>
 
 std::unique_ptr<llvm::Module> compileIntoBitcode(std::string_view path, clang::Language lang, std::string_view targetTriple, llvm::LLVMContext* context);

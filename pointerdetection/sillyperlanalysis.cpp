@@ -1,4 +1,4 @@
-#include <llvm-util/pointerdetection/pointerdetection.h>
+#include <llvm-utils/pointerdetection/pointerdetection.h>
 #include <llvm/IR/PassManager.h>
 
 llvm::AnalysisKey SillyPerlAnalysis::Key;

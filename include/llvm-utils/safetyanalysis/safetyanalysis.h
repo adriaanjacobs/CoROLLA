@@ -1,6 +1,6 @@
 #pragma once
 
-#include <llvm-util/util.h>
+#include <llvm-utils/util.h>
 #include <llvm/IR/Verifier.h>
 
 #include <optional>

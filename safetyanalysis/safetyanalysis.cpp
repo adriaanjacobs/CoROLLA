@@ -1,10 +1,10 @@
-#include <llvm-util/safetyanalysis/safetyanalysis.h>
+#include <llvm-utils/safetyanalysis/safetyanalysis.h>
 
-#include <llvm-util/util.h>
-#include <llvm-util/safetyanalysis/allocationbounds.h>
-#include <llvm-util/pointerdetection/pointerdetection.h>
-#include <llvm-util/reachability/reachingdefinitions.h>
-#include <llvm-util/breakconstantgeps/BreakConstantGEPs.h>
+#include <llvm-utils/util.h>
+#include <llvm-utils/safetyanalysis/allocationbounds.h>
+#include <llvm-utils/pointerdetection/pointerdetection.h>
+#include <llvm-utils/reachability/reachingdefinitions.h>
+#include <llvm-utils/breakconstantgeps/BreakConstantGEPs.h>
 
 #include <llvm/IR/IntrinsicsX86.h>
 #include <llvm/IR/Verifier.h>

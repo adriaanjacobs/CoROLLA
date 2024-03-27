@@ -1,6 +1,6 @@
-#include <llvm-util/safefunctioncloner/safefunctioncloner.h>
+#include <llvm-utils/safefunctioncloner/safefunctioncloner.h>
 
-#include <llvm-util/safetyanalysis/safetyanalysis.h>
+#include <llvm-utils/safetyanalysis/safetyanalysis.h>
 #include <llvm/Transforms/Utils/Cloning.h>
 
 

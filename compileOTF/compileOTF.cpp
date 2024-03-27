@@ -1,4 +1,4 @@
-#include <llvm-util/compileOTF/compileOTF.h>
+#include <llvm-utils/compileOTF/compileOTF.h>
 
 #include <clang/AST/ASTContext.h>
 #include <clang/AST/ASTConsumer.h>

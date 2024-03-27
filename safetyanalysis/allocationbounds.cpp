@@ -1,5 +1,5 @@
-#include <llvm-util/safetyanalysis/allocationbounds.h>
-#include <llvm-util/util.h>
+#include <llvm-utils/safetyanalysis/allocationbounds.h>
+#include <llvm-utils/util.h>
 
 #include <optional>
 
