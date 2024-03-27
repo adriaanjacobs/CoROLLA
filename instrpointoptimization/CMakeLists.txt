@@ -1,4 +1,2 @@
-project(instrpointoptimization)
-
 add_library(instrpointoptimization SHARED loopoptimizations.cpp)
 target_link_libraries(instrpointoptimization reachability)
