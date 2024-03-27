@@ -5,7 +5,7 @@
 
 extern const llvm::DenseMap<llvm::StringRef, std::function<std::pair<llvm::APInt, llvm::APInt>(llvm::Module&,llvm::ModuleAnalysisManager&,llvm::CallBase*)>> builtinLibcCallToBounds;
 
-static std::optional<decltype(builtinLibcCallToBounds)::value_type::second_type> isKnownLibcAllocator(llvm::Function* func) {
+std::optional<decltype(builtinLibcCallToBounds)::value_type::second_type> getKnownLibcAllocator(llvm::Function* func) {
     auto it = builtinLibcCallToBounds.find(func->getName());
     if (it != builtinLibcCallToBounds.end() && func->isDeclaration())
         return it->getSecond();
@@ -17,10 +17,14 @@ static std::optional<decltype(builtinLibcCallToBounds)::value_type::second_type>
     return std::nullopt;
 }
 
+bool isKnownLibcAllocator(llvm::Function* func) {
+    return getKnownLibcAllocator(func).has_value();
+}
+
 bool isNonWrapperAllocSite(llvm::Value* val) {
     if (auto callInst = llvm::dyn_cast<llvm::CallBase>(val)) {
         auto calledFunc = callInst->getCalledFunction();
-        return calledFunc && isKnownLibcAllocator(calledFunc);
+        return calledFunc && getKnownLibcAllocator(calledFunc);
     }
     return llvm::isa<llvm::AllocaInst, llvm::GlobalVariable>(val);
 }
@@ -53,7 +57,7 @@ std::optional<std::pair<llvm::APInt, llvm::APInt>> findMinimumAllocBounds(llvm::
     } else if (auto callInst = llvm::dyn_cast<llvm::CallBase>(allocInstr)) {
         auto calledFunc = callInst->getCalledFunction();
         assert(calledFunc);
-        if (auto it = isKnownLibcAllocator(calledFunc)) {
+        if (auto it = getKnownLibcAllocator(calledFunc)) {
             if (it.value()) {
                 return it.value()(module, MAM, callInst);
             } else HANDLE_UNKOWN_VALUE(callInst);
