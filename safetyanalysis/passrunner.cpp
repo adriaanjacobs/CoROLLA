@@ -61,10 +61,6 @@ if (argc != 3) {
 
     llvm::ModulePassManager MPM;
     IsInBoundsAnalysis::addPassesAround<MemAccessInstrumentator>(MPM);
-    // our own instrumentation
-    MPM.addPass(MemAccessInstrumentator{});
-    // Just to be sure that none of the passes messed up the module.
-    MPM.addPass(llvm::VerifierPass{});
     
     MPM.run(*module, MAM);
     
