@@ -69,7 +69,6 @@ struct PointerDetector {
     // warning: currently ignores direct calls from external code (publically linked functions)
     bool getIncomingValuesForArgument(llvm::Argument* argument, llvm::DenseSet<llvm::Value*>& incomingVals) const;
 
-    llvm::APInt findMinimumUnsignedValue(llvm::Value* val, llvm::Function* context) const;
     std::optional<llvm::APInt> findConstantOffset(llvm::GEPOperator* gep) const;
     std::optional<llvm::APInt> findConstantOffset(llvm::BinaryOperator* binaryOp) const;
 

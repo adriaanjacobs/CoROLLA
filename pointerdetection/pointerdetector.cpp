@@ -2,6 +2,7 @@
 
 #include <llvm-util/util.h>
 #include <llvm-util/safetyanalysis/pass.h>
+#include <llvm-util/safetyanalysis/allocationbounds.h>
 #include <llvm-util/reachability/reachingdefinitions.h>
 
 #include <llvm/IR/Constants.h>
@@ -28,7 +29,7 @@ void PointerDetector::identify_start_pointers(llvm::Module& module) {
     for (auto& func : module) {
         for (auto& bb : func) {
             for (auto& inst : bb) {
-                if (AllocWrapperDetector::isNonWrapperAllocSite(&inst))
+                if (isNonWrapperAllocSite(&inst))
                     mark_value(&inst, POINTER);
 
                 if (inst.mayReadOrWriteMemory()) {
@@ -62,17 +63,6 @@ void PointerDetector::identify_start_pointers(llvm::Module& module) {
     }
 
     llvm::outs() << pointers.size() << " start pointers identified.\n";
-}
-
-llvm::APInt PointerDetector::findMinimumUnsignedValue(llvm::Value* val, llvm::Function* context) const {
-    if (auto constantInt = llvm::dyn_cast<llvm::ConstantInt>(val)) {
-        return constantInt->getValue();
-    } else {
-        assert(context);
-        auto& scev = getFAM(module, MAM).getResult<llvm::ScalarEvolutionAnalysis>(*context);
-        auto sizeScev = scev.getSCEV(val);
-        return scev.getUnsignedRangeMin(sizeScev);
-    }
 }
 
 std::optional<llvm::APInt> PointerDetector::findConstantOffset(llvm::GEPOperator* gep) const {
@@ -197,7 +187,6 @@ llvm::Value* PointerDetector::find_real_base(llvm::Value *arithmetic) const {
     auto current = arithmetic;
     bool done = false;
     const auto& dataLayout = module.getDataLayout();
-    auto& allocDetector = MAM.getResult<AllocWrapperAnalysis>(module);
 
     while (!done) {
         assert(current);
@@ -283,7 +272,7 @@ llvm::Value* PointerDetector::find_real_base(llvm::Value *arithmetic) const {
                 done = true;
             else 
                 current = commonbase;
-        } else if (allocDetector.isNonWrapperAllocSite(current) 
+        } else if (isNonWrapperAllocSite(current) 
                     || llvm::isa<llvm::ConstantPointerNull, llvm::UndefValue, llvm::LoadInst, llvm::ExtractValueInst,
                                 llvm::ExtractElementInst, llvm::Argument, llvm::CallBase, llvm::PHINode, llvm::SelectInst>(current)
         ) {
