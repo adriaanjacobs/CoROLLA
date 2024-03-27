@@ -6,5 +6,6 @@
 #include <optional>
 
 bool isNonWrapperAllocSite(llvm::Value* val);
+llvm::StringRef getValueDescription(llvm::Value* val);
 
 std::optional<std::pair<llvm::APInt, llvm::APInt>> findMinimumAllocBounds(llvm::Value* allocInstr, llvm::Module& module, llvm::ModuleAnalysisManager& MAM);

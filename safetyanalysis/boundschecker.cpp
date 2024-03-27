@@ -36,20 +36,6 @@ void BoundsChecker::printBailStats() {
     bailStats = statsCpy;
 }
 
-static llvm::StringRef getValueDescription(llvm::Value* val) {
-    if (isNonWrapperAllocSite(val)) {
-        return "allocation site";
-    } else if (auto inst = llvm::dyn_cast<llvm::Instruction>(val)) {
-        return inst->getOpcodeName();
-    } else if (auto arg = llvm::dyn_cast<llvm::Argument>(val)) {
-        return "function argument";
-    } else if (llvm::isa<llvm::ConstantPointerNull, llvm::ConstantInt>(val)) {
-        return "constant pointer value";
-    } else if (llvm::isa<llvm::UndefValue>(val)) {
-        return "undef value";
-    } else HANDLE_UNKOWN_VALUE(val);
-}
-
 bool BoundsChecker::isInBounds(llvm::Value* offsetPtr, llvm::APInt storeSize) {
     auto [ptrIt, ptrInserted] = boundsCache.try_emplace(offsetPtr);
     assert(ptrIt != boundsCache.end());

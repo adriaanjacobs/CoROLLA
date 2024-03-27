@@ -25,6 +25,20 @@ bool isNonWrapperAllocSite(llvm::Value* val) {
     return llvm::isa<llvm::AllocaInst, llvm::GlobalVariable>(val);
 }
 
+llvm::StringRef getValueDescription(llvm::Value* val) {
+    if (isNonWrapperAllocSite(val)) {
+        return "allocation site";
+    } else if (auto inst = llvm::dyn_cast<llvm::Instruction>(val)) {
+        return inst->getOpcodeName();
+    } else if (auto arg = llvm::dyn_cast<llvm::Argument>(val)) {
+        return "function argument";
+    } else if (llvm::isa<llvm::ConstantPointerNull, llvm::ConstantInt>(val)) {
+        return "constant pointer value";
+    } else if (llvm::isa<llvm::UndefValue>(val)) {
+        return "undef value";
+    } else HANDLE_UNKOWN_VALUE(val);
+}
+
 std::optional<std::pair<llvm::APInt, llvm::APInt>> findMinimumAllocBounds(llvm::Value* allocInstr, llvm::Module& module, llvm::ModuleAnalysisManager& MAM) {
     ASSERT_ELSE_UNKOWN(isNonWrapperAllocSite(allocInstr), allocInstr);
     auto& dataLayout = module.getDataLayout();
