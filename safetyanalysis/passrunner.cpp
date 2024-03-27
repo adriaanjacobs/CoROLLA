@@ -1,22 +1,10 @@
-#include "pass.h"
+#include <llvm-util/safetyanalysis/pass.h>
 
-#include <llvm/ADT/StringRef.h>
-#include <llvm/Demangle/Demangle.h>
-#include <llvm/IR/Module.h>
-#include <llvm/IR/PassInstrumentation.h>
-#include <llvm/IR/PassManager.h>
 #include <llvm/IRReader/IRReader.h>
-#include <llvm/Pass.h>
-#include <llvm/Passes/PassBuilder.h>
 #include <llvm/Support/SourceMgr.h>
-#include <llvm/Support/raw_ostream.h>
-
-#include <pointerdetection/pointerdetection.h>
-
-#include <memory>
-#include <signal.h>
-#include <iostream>
-#include <system_error>
+#include <llvm/Passes/PassBuilder.h>
+#include <llvm/Analysis/CGSCCPassManager.h>
+#include <llvm/Analysis/AliasAnalysis.h>
 
 // We could, of course, also compile the above code into a shared object library
 // that we can then use as a plugin for LLVM's optimizer 'opt'. But instead,
@@ -73,7 +61,11 @@ if (argc != 3) {
 
     llvm::ModulePassManager MPM;
     IsInBoundsAnalysis::addPassesAround<MemAccessInstrumentator>(MPM);
-
+    // our own instrumentation
+    MPM.addPass(MemAccessInstrumentator{});
+    // Just to be sure that none of the passes messed up the module.
+    MPM.addPass(llvm::VerifierPass{});
+    
     MPM.run(*module, MAM);
     
     module->print(outputFile, nullptr);

@@ -1,10 +1,27 @@
-#include "pass.h"
+#include <llvm-util/safetyanalysis/pass.h>
 
-#include <util.h>
-#include <pointerdetection/pointerdetection.h>
-#include <reachability/reachingdefinitions.h>
+#include <llvm-util/util.h>
+#include <llvm-util/safetyanalysis/allocationbounds.h>
+#include <llvm-util/pointerdetection/pointerdetection.h>
+#include <llvm-util/reachability/reachingdefinitions.h>
 
 #include <llvm/IR/IntrinsicsX86.h>
+#include <llvm/IR/Verifier.h>
+#include <llvm/Transforms/Scalar/DCE.h>
+#include <llvm/Transforms/Scalar/SimplifyCFG.h>
+#include <llvm/Transforms/IPO/AlwaysInliner.h>
+#include <llvm/Transforms/Utils/Mem2Reg.h>
+#include <llvm/Transforms/IPO/CalledValuePropagation.h>
+#include <llvm/Transforms/IPO/FunctionAttrs.h>
+#include <llvm/Transforms/IPO/InferFunctionAttrs.h>
+#include <llvm/Transforms/IPO/SyntheticCountsPropagation.h>
+#include <llvm/Transforms/Scalar/LICM.h>
+#include <llvm/Transforms/Scalar/LoopDeletion.h>
+#include <llvm/Transforms/Scalar/LICM.h>
+#include <llvm/Transforms/Scalar/IndVarSimplify.h>
+#include <llvm/Transforms/Scalar/LoopFlatten.h>
+#include <llvm/Transforms/Scalar/SimpleLoopUnswitch.h>
+#include <llvm/Transforms/Scalar/LoopRotation.h>
 
 #include <experimental/array>
 #include <optional>
@@ -45,7 +62,6 @@ UnsafeAccessFinderAnalysis::UnsafeAccessInfo::UnsafeAccessInfo(llvm::Module& mod
     llvm::outs() << "Size of loadAndStores: " << pointerOperands.size() << ", reporting every " << unit << " iterations.\n";
 
     auto& boundschecker = MAM.getResult<IsInBoundsAnalysis>(module);
-    auto& allocWrappers = MAM.getResult<AllocWrapperAnalysis>(module);
     auto& pointerDetector = MAM.getResult<PointerDetectionAnalysis>(module);
     for (auto operand : pointerOperands) {
         auto loadStoreSize = dataLayout.getTypeStoreSize(operand->getType()->getPointerElementType());
@@ -56,8 +72,8 @@ UnsafeAccessFinderAnalysis::UnsafeAccessInfo::UnsafeAccessInfo(llvm::Module& mod
             auto stripOp = pointerDetector.strip_pointer_casts(operand);
             bool opaqueglobal = false;
             if (llvm::isa<llvm::Constant>(stripOp)) {
-                assert(allocWrappers.isAllocationSite(stripOp));
-                if (auto allocBounds = allocWrappers.findMinimumAllocBounds(stripOp); allocBounds.has_value() && allocBounds == std::pair{llvm::APInt{64, 0}, llvm::APInt{64, 0}}) {
+                assert(isNonWrapperAllocSite(stripOp));
+                if (auto allocBounds = findMinimumAllocBounds(stripOp, module, MAM); allocBounds.has_value() && allocBounds == std::pair{llvm::APInt{64, 0}, llvm::APInt{64, 0}}) {
                     // this is an opaque global, do not instrument
                     opaqueglobal = true;
                 }
@@ -258,19 +274,56 @@ llvm::PreservedAnalyses MemAccessInstrumentator::run(llvm::Module &module, llvm:
 void MemAccessInstrumentator::registerAnalyses(llvm::ModuleAnalysisManager &MAM) {
     // Register our analyses
     MAM.registerPass([&] { return UnsafeAccessFinderAnalysis{}; });
-    MAM.registerPass([&] { return AllocWrapperAnalysis{}; });
     MAM.registerPass([&] { return IsInBoundsAnalysis{}; });
     MAM.registerPass([&] { return PointerDetectionAnalysis{}; });
     MAM.registerPass([&] { return ReachingDefinitionsAnalysis{}; });
     MAM.registerPass([&] { return SillyPerlAnalysis{}; });
 }
 
-llvm::PreservedAnalyses AllocWrapperAlwaysInlineMarkerPass::run(llvm::Module& module, llvm::ModuleAnalysisManager &MAM) {
-    auto allocDetector = MAM.getResult<AllocWrapperAnalysis>(module);
+void IsInBoundsAnalysis::addPreparationPasses(llvm::ModulePassManager& MPM) {
+    // check the initial module
+    MPM.addPass(llvm::VerifierPass{});
+    // infer function attributes to help allocationwrapperanalysis and later points-to analyses
+    MPM.addPass(llvm::InferFunctionAttrsPass{});
+    MPM.addPass(llvm::createModuleToPostOrderCGSCCPassAdaptor(llvm::PostOrderFunctionAttrsPass{}));
+    MPM.addPass(llvm::ReversePostOrderFunctionAttrsPass{});
+    // any load/stores that LLVM can eliminate/prove safe lessen the burden for me
+    MPM.addPass(llvm::createModuleToFunctionPassAdaptor(llvm::PromotePass{}));
+    // some of the functionality in llvm (isAuxIndVar) depends on every loop having a preheader
+    MPM.addPass(llvm::createModuleToFunctionPassAdaptor(llvm::LoopSimplifyPass{}));      
+    // rotate all the loops, makes it so that loop body more frequently postdominates the preheader
+    // loop rotate & LICM as much loops as possible up front
+    llvm::LoopPassManager LPM;
+    LPM.addPass(llvm::LoopFlattenPass{});
+    LPM.addPass(llvm::IndVarSimplifyPass{});
+    LPM.addPass(llvm::LoopDeletionPass{});
+    LPM.addPass(llvm::LoopRotatePass{true, true});
+    LPM.addPass(llvm::LICMPass{llvm::LICMOptions()});
+    LPM.addPass(llvm::SimpleLoopUnswitchPass{true, true});
 
-    for (const auto& [wrapper, _] : allocDetector.getAllocFuncs()) {
-        wrapper->addFnAttr(llvm::Attribute::AlwaysInline);
-    }
+    llvm::FunctionPassManager FPM;
+    FPM.addPass(llvm::SimplifyCFGPass{});
+    FPM.addPass(llvm::LCSSAPass{});
+    FPM.addPass(llvm::createFunctionToLoopPassAdaptor(std::move(LPM), true, true, true));
+    
+    MPM.addPass(llvm::createModuleToFunctionPassAdaptor(std::move(FPM), true));
+    MPM.addPass(llvm::VerifierPass{});
 
-    return llvm::PreservedAnalyses::none();
+    MPM.addPass(llvm::CalledValuePropagationPass{});
+
+    MPM.addPass(llvm::SyntheticCountsPropagation{});
+    // maybe we fucked up the SVF simplification
+    MPM.addPass(llvm::VerifierPass{});
+}
+
+void IsInBoundsAnalysis::addCleanupPasses(llvm::ModulePassManager& MPM) {
+    // this cancels out the transformations by loopsimplify
+    MPM.addPass(llvm::createModuleToFunctionPassAdaptor(llvm::SimplifyCFGPass{}));
+    // for any instrumentation we emitted
+    MPM.addPass(llvm::AlwaysInlinerPass{});
+    // removing the dead (uncalled) functions
+    MPM.addPass(llvm::createModuleToFunctionPassAdaptor(llvm::DCEPass{}));
+    // running mem2reg after the transformation has proven to have amazing effects 
+    MPM.addPass(llvm::createModuleToFunctionPassAdaptor(llvm::PromotePass{}));
+    MPM.addPass(llvm::VerifierPass{});
 }

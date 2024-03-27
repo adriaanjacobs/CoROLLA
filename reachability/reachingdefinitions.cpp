@@ -1,7 +1,8 @@
-#include "reachingdefinitions.h"
-#include "cfg_reachability.h"
-#include <util.h>
-#include <pointerdetection/pointerdetection.h>
+#include <llvm-util/reachability/reachingdefinitions.h>
+
+#include <llvm-util/reachability/cfg_reachability.h>
+#include <llvm-util/util.h>
+#include <llvm-util/pointerdetection/pointerdetection.h>
 
 llvm::AnalysisKey ReachingDefinitionsAnalysis::Key;
 

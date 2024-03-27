@@ -1,7 +1,9 @@
-#include "pass.h"
-#include <util.h>
-#include <pointerdetection/pointerdetection.h>
-#include <reachability/reachingdefinitions.h>
+#include <llvm-util/safetyanalysis/pass.h>
+
+#include <llvm-util/safetyanalysis/allocationbounds.h>
+#include <llvm-util/util.h>
+#include <llvm-util/pointerdetection/pointerdetection.h>
+#include <llvm-util/reachability/reachingdefinitions.h>
 
 #include <llvm/IR/Instructions.h>
 #include <llvm/Analysis/AliasAnalysis.h>
@@ -34,17 +36,30 @@ void BoundsChecker::printBailStats() {
     bailStats = statsCpy;
 }
 
+static llvm::StringRef getValueDescription(llvm::Value* val) {
+    if (isNonWrapperAllocSite(val)) {
+        return "allocation site";
+    } else if (auto inst = llvm::dyn_cast<llvm::Instruction>(val)) {
+        return inst->getOpcodeName();
+    } else if (auto arg = llvm::dyn_cast<llvm::Argument>(val)) {
+        return "function argument";
+    } else if (llvm::isa<llvm::ConstantPointerNull, llvm::ConstantInt>(val)) {
+        return "constant pointer value";
+    } else if (llvm::isa<llvm::UndefValue>(val)) {
+        return "undef value";
+    } else HANDLE_UNKOWN_VALUE(val);
+}
+
 bool BoundsChecker::isInBounds(llvm::Value* offsetPtr, llvm::APInt storeSize) {
     auto [ptrIt, ptrInserted] = boundsCache.try_emplace(offsetPtr);
     assert(ptrIt != boundsCache.end());
     auto [offsetIt, offsetInserted] = ptrIt->getSecond().try_emplace(storeSize, std::nullopt);
     assert(offsetIt != ptrIt->getSecond().end());
-    auto& allocDetector = MAM.getResult<AllocWrapperAnalysis>(module);
 
     auto isInRange = [&] (llvm::Value* current, llvm::APInt offset, DIRECTION) -> std::optional<bool> {
-        if (allocDetector.isNonWrapperAllocSite(current)) {
+        if (isNonWrapperAllocSite(current)) {
             // these are other allocations, likely also in the points-to set of this pointer operand. 
-            auto allocBounds = allocDetector.findMinimumAllocBounds(current);
+            auto allocBounds = findMinimumAllocBounds(current, module, MAM);
 
             if (!allocBounds.has_value()) 
                 return { false };
@@ -72,7 +87,7 @@ bool BoundsChecker::isInBounds(llvm::Value* offsetPtr, llvm::APInt storeSize) {
         // }
 
         if (!inBounds)
-            bailStats[allocDetector.getValueDescription(mostRecentDecider)]++;
+            bailStats[getValueDescription(mostRecentDecider)]++;
         offsetIt->getSecond() = inBounds;
     }
     assert(offsetIt->getSecond().has_value());
@@ -119,7 +134,6 @@ bool BoundsChecker::isInBounds_internal(llvm::Value* offsetPtr, llvm::APInt offs
 
     auto& dataLayout = module.getDataLayout();
     auto& context = module.getContext();
-    auto& allocDetector = MAM.getResult<AllocWrapperAnalysis>(module);
     auto& FAM = getFAM(module, MAM);
 
     llvm::Value* current = offsetPtr;

@@ -1,11 +1,10 @@
-#include "safefunctioncloner.h"
-#include <safetyanalysis/pass.h>
-#include <wrapgeps/wrapgeps.h>
+#include <llvm-util/safefunctioncloner/safefunctioncloner.h>
+
+#include <llvm-util/safetyanalysis/pass.h>
 #include <llvm/Transforms/Utils/Cloning.h>
 
 
 llvm::PreservedAnalyses SafeFunctionClonerPass::run(llvm::Module& module, llvm::ModuleAnalysisManager& MAM) {
-    auto& gepdetector = MAM.getResult<GepDetectionAnalysis>(module);
     auto boundsChecker = MAM.getCachedResult<IsInBoundsAnalysis>(module);
     assert(boundsChecker && "GepDetectionAnalysis should have filled the bounds checker!");
 

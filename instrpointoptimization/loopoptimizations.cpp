@@ -1,8 +1,8 @@
-#include "hoistloopmemaccesses.h"
+#include <llvm-util/instrpointoptimization/hoistloopmemaccesses.h>
 
-#include "util.h"
-#include <reachability/cfg_reachability.h>
-#include <pointerdetection/pointerdetection.h>
+#include <llvm-util/util.h>
+#include <llvm-util/reachability/cfg_reachability.h>
+#include <llvm-util/pointerdetection/pointerdetection.h>
 
 #include <llvm/Transforms/Utils/ScalarEvolutionExpander.h>
 #include <llvm/IR/Verifier.h>

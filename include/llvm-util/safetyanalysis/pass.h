@@ -1,32 +1,9 @@
 #pragma once
 
 #include <llvm-util/util.h>
-#include <llvm-util/pointerdetection/pointerdetection.h>
-
-#include <llvm/Pass.h>
-#include <llvm/IR/IRPrintingPasses.h>
 #include <llvm/IR/Verifier.h>
-#include <llvm/Transforms/IPO/AlwaysInliner.h>
-#include <llvm/Transforms/IPO/FunctionAttrs.h>
-#include <llvm/Transforms/IPO/InferFunctionAttrs.h>
-#include <llvm/Transforms/IPO/SyntheticCountsPropagation.h>
-#include <llvm/Transforms/IPO/CalledValuePropagation.h>
-#include <llvm/Transforms/Scalar/DCE.h>
-#include <llvm/Transforms/Scalar/LICM.h>
-#include <llvm/Transforms/Scalar/IndVarSimplify.h>
-#include <llvm/Transforms/Scalar/LoopDeletion.h>
-#include <llvm/Transforms/Scalar/LoopRotation.h>
-#include <llvm/Transforms/Scalar/LoopFlatten.h>
-#include <llvm/Transforms/Scalar/SimpleLoopUnswitch.h>
-#include <llvm/Transforms/Scalar/SimplifyCFG.h>
-#include <llvm/Transforms/Utils/Mem2Reg.h>
 
-#include <bitset>
-#include <system_error>
 #include <optional>
-#include <functional>
-
-#include <Util/ExtAPI.h>
 
 //===----------------------------------------------------------------------===//
 /// This class implements an LLVM module analysis pass.
@@ -76,146 +53,22 @@ public:
     // Analyze the bitcode/IR in the given LLVM module.
     Result run(llvm::Module& module, [[maybe_unused]] llvm::ModuleAnalysisManager& MAM);
 
+private:
+    static void addPreparationPasses(llvm::ModulePassManager& MPM);
+    static void addCleanupPasses(llvm::ModulePassManager& MPM);
+
+public:
     template<typename PassT, typename VerifierT = llvm::VerifierPass>
     static void addPassesAround(llvm::ModulePassManager& MPM) {
-//         MPM.addPass(llvm::createModuleToFunctionPassAdaptor(llvm::SimplifyCFGPass{}));
-//         MPM.addPass(llvm::createModuleToFunctionPassAdaptor(llvm::PromotePass{}));
-//         MPM.addPass(llvm::createModuleToPostOrderCGSCCPassAdaptor(llvm::ArgumentPromotionPass{}));
-//         // MPM.addPass(AllocWrapperAlwaysInlineMarkerPass());
-//         // MPM.addPass(llvm::AlwaysInlinerPass());
-//         // MPM.addPass(llvm::VerifierPass());
-//         // MPM.addPass(llvm::createModuleToFunctionPassAdaptor(llvm::InstCombinePass()));
-//         MPM.addPass(llvm::createModuleToFunctionPassAdaptor(llvm::LCSSAPass()));
-//         MPM.addPass(llvm::createModuleToFunctionPassAdaptor(llvm::LoopSimplifyPass()));
-//         MPM.addPass(llvm::createModuleToFunctionPassAdaptor(llvm::LoopSimplifyPass{}));
-//         // MPM.addPass(llvm::createModuleToFunctionPassAdaptor(llvm::createFunctionToLoopPassAdaptor(llvm::IndVarSimplifyPass{})));
-//         // MPM.addPass(llvm::createModuleToFunctionPassAdaptor(llvm::createFunctionToLoopPassAdaptor(llvm::LICMPass{}
-// #if MY_LLVM_VERSION >= 15
-//         , true, true, true
-// #endif
-//         // )));
-//         MPM.addPass(llvm::createModuleToFunctionPassAdaptor(llvm::PromotePass{}));
-//         // MPM.addPass(llvm::createModuleToFunctionPassAdaptor(llvm::createFunctionToLoopPassAdaptor(llvm::LICMPass{}
-// #if MY_LLVM_VERSION >= 15
-//         , true, true, true
-// #endif
-//         // )));
-        // print the initial module
-        auto code = new std::error_code();
-        auto beforestream = new llvm::raw_fd_ostream("inputmodule.debug.ll", *code);
-        assert(code->value() == 0);
-        MPM.addPass(llvm::PrintModulePass(*beforestream));
-        // check the initial module
-        MPM.addPass(llvm::VerifierPass{});
-        // infer function attributes to help allocationwrapperanalysis and later points-to analyses
-        MPM.addPass(llvm::InferFunctionAttrsPass{});
-        MPM.addPass(llvm::createModuleToPostOrderCGSCCPassAdaptor(llvm::PostOrderFunctionAttrsPass{}));
-        MPM.addPass(llvm::ReversePostOrderFunctionAttrsPass{});
-        // any load/stores that LLVM can eliminate/prove safe lessen the burden for me
-        MPM.addPass(llvm::createModuleToFunctionPassAdaptor(llvm::PromotePass{}));
-        // some of the functionality in llvm (isAuxIndVar) depends on every loop having a preheader
-        MPM.addPass(llvm::createModuleToFunctionPassAdaptor(llvm::LoopSimplifyPass{}));      
-        // rotate all the loops, makes it so that loop body more frequently postdominates the preheader
-        // loop rotate & LICM as much loops as possible up front
-        llvm::LoopPassManager LPM;
-        LPM.addPass(llvm::LoopFlattenPass{});
-        LPM.addPass(llvm::IndVarSimplifyPass{});
-        LPM.addPass(llvm::LoopDeletionPass{});
-        LPM.addPass(llvm::LoopRotatePass{true, true});
-        LPM.addPass(llvm::LICMPass{llvm::LICMOptions()});
-        LPM.addPass(llvm::SimpleLoopUnswitchPass{true, true});
-
-        llvm::FunctionPassManager FPM;
-        FPM.addPass(llvm::SimplifyCFGPass{});
-        FPM.addPass(llvm::LCSSAPass{});
-        FPM.addPass(llvm::createFunctionToLoopPassAdaptor(std::move(LPM), true, true, true));
-        
-        MPM.addPass(llvm::createModuleToFunctionPassAdaptor(std::move(FPM), true));
-        MPM.addPass(llvm::VerifierPass{});
-
-        MPM.addPass(llvm::CalledValuePropagationPass{});
-
-        // SVF simplification passes
-        MPM.addPass(SVFPass{});
-        MPM.addPass(llvm::SyntheticCountsPropagation{});
-        // maybe we fucked up the SVF simplification
-        MPM.addPass(llvm::VerifierPass{});
-        // our own instrumentation
+        addPreparationPasses(MPM);
         MPM.addPass(PassT{});
-        // Just to be sure that none of the passes messed up the module.
         MPM.addPass(VerifierT{});
-        // this cancels out the transformations by loopsimplify
-        MPM.addPass(llvm::createModuleToFunctionPassAdaptor(llvm::SimplifyCFGPass{}));
-        // for any instrumentation we emitted
-        MPM.addPass(llvm::AlwaysInlinerPass{});
-        // removing the dead (uncalled) functions
-        MPM.addPass(llvm::createModuleToFunctionPassAdaptor(llvm::DCEPass{}));
-        // running mem2reg after the transformation has proven to have amazing effects on my attestation instrumentation
-        MPM.addPass(llvm::createModuleToFunctionPassAdaptor(llvm::PromotePass{}));
-        MPM.addPass(VerifierT{});
-        auto afterstream = new llvm::raw_fd_ostream("outputmodule.debug.ll", *code);
-        assert(code->value() == 0);
-        MPM.addPass(llvm::PrintModulePass(*afterstream));
+        addCleanupPasses(MPM);
     }
 };
 
 using BoundsChecker = IsInBoundsAnalysis::BoundsChecker;
 
-//===----------------------------------------------------------------------===//
-/// This class implements an LLVM module analysis pass.
-///
-class AllocWrapperAnalysis : public llvm::AnalysisInfoMixin<AllocWrapperAnalysis> {
-public:
-    explicit AllocWrapperAnalysis() = default;
-    ~AllocWrapperAnalysis() = default;
-    // Provide a unique key, i.e., memory address to be used by the LLVM's pass
-    // infrastructure.
-    static llvm::AnalysisKey Key;
-    friend llvm::AnalysisInfoMixin<AllocWrapperAnalysis>;
-
-    struct Detector {
-        using enum SVF::ExtAPI::extType;
-        struct AllocWrapperInfo {
-            llvm::DenseSet<llvm::Value*> allocSites;
-            SVF::ExtAPI::extType type = EFT_NULL;
-        };
-
-        static bool isNonWrapperAllocSite(llvm::Value* val);
-        bool isAllocationSite(llvm::Value* val);
-        bool isWrapperOrLibcCall(llvm::Value* val);
-        llvm::StringRef getValueDescription(llvm::Value* val);
-
-        std::optional<std::pair<llvm::APInt, llvm::APInt>> findMinimumAllocBounds(llvm::Value* allocInstr);
-
-        Detector(llvm::Module& module, llvm::ModuleAnalysisManager& MAM);
-    private:
-        llvm::Module& module;
-        llvm::ModuleAnalysisManager& MAM;
-        PointerDetector& pointerDetector;
-        llvm::DenseMap<llvm::Function*, AllocWrapperInfo> allocFuncs;
-
-        std::pair<llvm::APInt, llvm::APInt> findMmapBounds(llvm::CallBase* callInst);
-        std::pair<llvm::APInt, llvm::APInt> boundsOfReturnedPointeeType(llvm::CallBase* callInst);
-        std::pair<llvm::APInt, llvm::APInt> boundsOfMallocLike(llvm::CallBase* call);
-        enum struct AllocSiteStatus { NONE, NULLPTR, ALLOCSITE };
-        AllocSiteStatus reducesToAllocationSite(llvm::Value* val, llvm::DenseSet<llvm::Value*>& allocSites);
-
-        static const llvm::DenseMap<llvm::StringRef, std::function<std::pair<llvm::APInt, llvm::APInt>(Detector*,llvm::CallBase*)>> builtinLibcCallToBounds;
-
-        std::optional<SVF::ExtAPI::extType> deriveExtFnTy(llvm::Value* val);
-    public:
-        const llvm::DenseMap<llvm::Function*, AllocWrapperInfo>& getAllocFuncs() { return allocFuncs; } 
-        static std::optional<decltype(builtinLibcCallToBounds)::value_type::second_type> isKnownLibcAllocator(llvm::Function* func);
-    };
-
-    // Specify the result type of this analysis pass.
-    using Result = Detector;
-
-    // Analyze the bitcode/IR in the given LLVM module.
-    Result run(llvm::Module &M, llvm::ModuleAnalysisManager &MAM);
-};
-
-using AllocWrapperDetector = AllocWrapperAnalysis::Detector;
 
 //===----------------------------------------------------------------------===//
 /// This class implements an LLVM module analysis pass.
