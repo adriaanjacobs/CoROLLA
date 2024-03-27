@@ -19,6 +19,11 @@ include_directories(include/)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_C_STANDARD 17)
+
+add_compile_options(-Wall -Wextra -Werror=return-type -Wno-c99-designator -Wimplicit-fallthrough -Wno-comment  -Wno-unused-parameter -Wno-unused-variable -Wno-unused-but-set-variable)
+add_compile_options(-ggdb -fPIC -fno-rtti)
+add_compile_options(-O2)
 
 add_library(util SHARED util.cpp)
 target_link_libraries(util ${llvm_libs})
