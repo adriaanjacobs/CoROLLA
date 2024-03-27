@@ -1,4 +1,4 @@
-#include <llvm-util/safetyanalysis/pass.h>
+#include <llvm-util/safetyanalysis/safetyanalysis.h>
 
 #include <llvm-util/safetyanalysis/allocationbounds.h>
 #include <llvm-util/util.h>
