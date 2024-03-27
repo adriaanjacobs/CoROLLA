@@ -1,9 +1,7 @@
 #pragma once
 
-#include <config.h>
-#include "util.h"
-
-#include "cfg_reachability.h"
+#include <llvm-utils/util.h>
+#include <llvm-utils/reachability/cfg_reachability.h>
 
 struct ReachabilityGraph {
     llvm::DenseMap<llvm::Instruction*, llvm::DenseSet<llvm::Instruction*>> instToSuccs;
