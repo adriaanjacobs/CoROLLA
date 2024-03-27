@@ -20,6 +20,9 @@ include_directories(include/)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+add_library(util SHARED util.cpp)
+target_link_libraries(util ${llvm_libs})
+
 add_subdirectory(compileOTF)
 add_subdirectory(instrpointoptimization)
 add_subdirectory(pointerdetection)

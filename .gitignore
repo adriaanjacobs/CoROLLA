@@ -2,6 +2,11 @@
 !CMakeLists.txt
 !.gitignore
 
+!util.cpp
+
+!include/
+!include/*
+
 !compileOTF/
 !compileOTF/*
 
