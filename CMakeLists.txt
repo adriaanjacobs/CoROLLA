@@ -26,8 +26,9 @@ add_compile_options(-ggdb -fPIC -fno-rtti)
 add_compile_options(-O2)
 
 add_library(util SHARED util.cpp)
-target_link_libraries(util ${llvm_libs})
+target_link_libraries(util breakconstantgeps)
 
+add_subdirectory(breakconstantgeps)
 add_subdirectory(compileOTF)
 add_subdirectory(instrpointoptimization)
 add_subdirectory(pointerdetection)

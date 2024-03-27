@@ -4,6 +4,7 @@
 #include <llvm-util/safetyanalysis/allocationbounds.h>
 #include <llvm-util/pointerdetection/pointerdetection.h>
 #include <llvm-util/reachability/reachingdefinitions.h>
+#include <llvm-util/breakconstantgeps/BreakConstantGEPs.h>
 
 #include <llvm/IR/IntrinsicsX86.h>
 #include <llvm/IR/Verifier.h>
@@ -292,12 +293,15 @@ void IsInBoundsAnalysis::addPreparationPasses(llvm::ModulePassManager& MPM) {
     llvm::FunctionPassManager FPM;
     FPM.addPass(llvm::SimplifyCFGPass{});
     FPM.addPass(llvm::LCSSAPass{});
+    FPM.addPass(llvm::UnifyFunctionExitNodesPass{});
     FPM.addPass(llvm::createFunctionToLoopPassAdaptor(std::move(LPM), true, true, true));
     
     MPM.addPass(llvm::createModuleToFunctionPassAdaptor(std::move(FPM), true));
     MPM.addPass(llvm::VerifierPass{});
 
     MPM.addPass(llvm::CalledValuePropagationPass{});
+
+    MPM.addPass(BreakConstantGEPsPass{});
 
     MPM.addPass(llvm::SyntheticCountsPropagation{});
     // maybe we fucked up the SVF simplification
