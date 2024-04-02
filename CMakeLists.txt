@@ -12,7 +12,6 @@ message(STATUS "Found Clang ${Clang_PACKAGE_VERSION}")
 message(STATUS "Using ClangConfig.cmake in: ${Clang_DIR}")
 include_directories(${LLVM_INCLUDE_DIRS})
 
-llvm_map_components_to_libnames(llvm_libs Passes bitwriter core ipo irreader instcombine instrumentation target linker analysis scalaropts support transformutils)
 set(clang_libs clang-cpp)
 
 include_directories(include/)
