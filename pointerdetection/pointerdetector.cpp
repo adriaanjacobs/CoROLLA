@@ -766,7 +766,7 @@ std::optional<llvm::Value*> PointerDetector::mark_binaryOp_origins(T* binaryOp, 
     return std::nullopt;
 }
 
-PointerDetector::CallSiteInfo& PointerDetector::getCallSiteInfo(llvm::Function* function) const {
+const PointerDetector::CallSiteInfo& PointerDetector::getCallSiteInfo(llvm::Function* function) const {
     auto [callSiteInfoIt, inserted] = cachedCallSiteInfo.try_emplace(function, function);
     auto& info = callSiteInfoIt->getSecond();
     if (inserted) 
@@ -833,7 +833,7 @@ void PointerDetector::collectCallSiteInfo(llvm::Value* function, llvm::DenseSet<
 bool PointerDetector::getIncomingValuesForArgument(llvm::Argument* argument, llvm::DenseSet<llvm::Value*>& incomingVals) const {
     auto function = argument->getParent();
 
-    auto& callSiteInfo = getCallSiteInfo(function);
+    const auto& callSiteInfo = getCallSiteInfo(function);
 
     bool isComplete = callSiteInfo.isOnlyDirectlyCalled() && !callSiteInfo.noUsesFound();
     // collect incoming values for the argument value, in suitable callsites

@@ -63,7 +63,7 @@ struct PointerDetector {
         bool isOnlyDirectlyCalled () const;
         bool noUsesFound() const;
     };
-    CallSiteInfo& getCallSiteInfo(llvm::Function* function) const;
+    const CallSiteInfo& getCallSiteInfo(llvm::Function* function) const;
     void forgetCallSiteInfo(llvm::Function* function);
 
     // warning: currently ignores direct calls from external code (publically linked functions)
