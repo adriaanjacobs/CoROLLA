@@ -27,20 +27,21 @@ llvm::Module* moduleOf(llvm::Value* val);
 
 llvm::Function* functionOf(llvm::Value* val);
 
-#define HANDLE_UNKOWN_VALUE(val)                                                                                \
+#define HANDLE_UNKOWN_VALUE(_val)                                                                               \
     do {                                                                                                        \
-        if (llvm::Module* _module__ = moduleOf(val)) {                                                          \
+        auto evalval = (_val);                                                                                  \
+        if (llvm::Module* _module__ = moduleOf(evalval)) {                                                          \
             dumpModuleToFile(*_module__, "currentmodule.atUnknownValue.debug.ll");                              \
-            if (llvm::Function* _func__ = functionOf(val))                                                      \
+            if (llvm::Function* _func__ = functionOf(evalval))                                                      \
                 llvm::errs() << "In func: '" << _func__->getName() << "'\n";                                    \
         }                                                                                                       \
         llvm::errs() << "Unkown value type: \n";                                                                \
-        llvm::errs() << "\t" << *val << "\n\n";                                                                 \
+        llvm::errs() << "\t" << *evalval << "\n\n";                                                                 \
         llvm::errs() << "Is constant: " << (llvm::isa<llvm::Constant>(val) ? "yes" : "no") << "\n";             \
-        llvm::errs() << "Is GlobalVariable: " << (llvm::isa<llvm::GlobalVariable>(val) ? "yes" : "no") << "\n"; \
-        llvm::errs() << "Is ConstantData: " << (llvm::isa<llvm::ConstantData>(val) ? "yes" : "no") << "\n";     \
-        llvm::errs() << "Is instruction: " << (llvm::isa<llvm::Instruction>(val) ? "yes" : "no") << "\n";       \
-        llvm::errs() << "Is operator: " << (llvm::isa<llvm::Operator>(val) ? "yes" : "no") << "\n";             \
+        llvm::errs() << "Is GlobalVariable: " << (llvm::isa<llvm::GlobalVariable>(evalval) ? "yes" : "no") << "\n"; \
+        llvm::errs() << "Is ConstantData: " << (llvm::isa<llvm::ConstantData>(evalval) ? "yes" : "no") << "\n";     \
+        llvm::errs() << "Is instruction: " << (llvm::isa<llvm::Instruction>(evalval) ? "yes" : "no") << "\n";       \
+        llvm::errs() << "Is operator: " << (llvm::isa<llvm::Operator>(evalval) ? "yes" : "no") << "\n";             \
         llvm::errs().flush();                                                                                   \
         assert(!"Unkown instruction!");                                                                         \
     } while (false)
@@ -66,8 +67,9 @@ constexpr std::array scevTypesToString = std::experimental::make_array(
 
 #define PRINT_UNKOWN_SCEV(scev) \
     do {    \
-        llvm::errs() << "Unkown scev with type '" << scevTypesToString[scev->getSCEVType()] << "':\n";   \
-        llvm::errs() << "\t" << *scev << "\n";   \
+        auto evalscev = (scev); \
+        llvm::errs() << "Unkown scev with type '" << scevTypesToString[evalscev->getSCEVType()] << "':\n";   \
+        llvm::errs() << "\t" << *evalscev << "\n";   \
     } while (false) 
 
 #define HANDLE_UNKOWN_SCEV(scev) \
@@ -100,6 +102,11 @@ struct run_on_destruct {
     run_on_destruct(auto func) : func{std::move(func)} {}
     ~run_on_destruct() { func(); }
 };
+
+#define CONCAT_(x,y) x##y
+#define CONCAT(x,y) CONCAT_(x,y)
+#define UNIQUE_VAR_NAME CONCAT(_unique_var_, __COUNTER__)
+#define defer(block) run_on_destruct UNIQUE_VAR_NAME{[&] () -> void { block; }}
 
 inline llvm::FunctionAnalysisManager& getFAM(llvm::Module& module, llvm::ModuleAnalysisManager& MAM) {
     return MAM.getResult<llvm::FunctionAnalysisManagerModuleProxy>(module).getManager();
