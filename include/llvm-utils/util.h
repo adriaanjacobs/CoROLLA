@@ -37,7 +37,7 @@ llvm::Function* functionOf(llvm::Value* val);
         }                                                                                                       \
         llvm::errs() << "Unkown value type: \n";                                                                \
         llvm::errs() << "\t" << *evalval << "\n\n";                                                                 \
-        llvm::errs() << "Is constant: " << (llvm::isa<llvm::Constant>(val) ? "yes" : "no") << "\n";             \
+        llvm::errs() << "Is constant: " << (llvm::isa<llvm::Constant>(evalval) ? "yes" : "no") << "\n";             \
         llvm::errs() << "Is GlobalVariable: " << (llvm::isa<llvm::GlobalVariable>(evalval) ? "yes" : "no") << "\n"; \
         llvm::errs() << "Is ConstantData: " << (llvm::isa<llvm::ConstantData>(evalval) ? "yes" : "no") << "\n";     \
         llvm::errs() << "Is instruction: " << (llvm::isa<llvm::Instruction>(evalval) ? "yes" : "no") << "\n";       \

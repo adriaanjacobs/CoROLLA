@@ -1,0 +1,2 @@
+add_library(callsiteanalysis SHARED callsiteanalysis.cpp)
+target_link_libraries(callsiteanalysis util)

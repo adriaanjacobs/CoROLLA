@@ -4,6 +4,7 @@
 #include <llvm-utils/util.h>
 #include <llvm-utils/pointerdetection/pointerdetection.h>
 #include <llvm-utils/reachability/reachingdefinitions.h>
+#include <llvm-utils/callsiteanalysis/callsiteanalysis.h>
 
 #include <llvm/IR/Instructions.h>
 #include <llvm/Analysis/AliasAnalysis.h>
@@ -160,9 +161,9 @@ bool BoundsChecker::isInBounds_internal(llvm::Value* offsetPtr, llvm::APInt offs
             // if (!function->hasInternalLinkage())
             //     return false;
 
-            auto& pointerDetector = MAM.getResult<PointerDetectionAnalysis>(module); 
+            auto& callSiteAnalysis = MAM.getResult<CallSiteAnalysis>(module); 
             llvm::DenseSet<llvm::Value*> incomingVals;
-            bool isComplete = pointerDetector.getIncomingValuesForArgument(argument, incomingVals);
+            bool isComplete = callSiteAnalysis.getIncomingValuesForArgument(argument, incomingVals);
             if (!isComplete)
                 return false;
             for (auto argOperand : incomingVals) {
