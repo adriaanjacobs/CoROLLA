@@ -1,2 +1,2 @@
-add_library(breakconstantgeps BreakConstantGEPs.cpp)
+add_library(breakconstantgeps SHARED BreakConstantGEPs.cpp)
 target_link_libraries(breakconstantgeps LLVM)
