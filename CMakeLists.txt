@@ -1,6 +1,6 @@
-project(llvm-utils)
-
 cmake_minimum_required(VERSION 3.4.3)
+
+project(llvm-utils)
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
