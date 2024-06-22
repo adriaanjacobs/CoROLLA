@@ -1,5 +1,7 @@
 # Collection of Reusable Out-Of-Tree LLVM Utilities
 
+> **NOTE**: If you are a student using this code, please do not make any of the code public anywhere without my explicit permission. Otherwise, have fun. 
+
 This repo got split off from an older megarepo some months ago. Frequent updates and breakages are expected. Entirely unstable.
 
 ## Building
