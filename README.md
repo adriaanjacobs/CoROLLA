@@ -5,7 +5,17 @@
 This repo got split off from an older megarepo some months ago. Frequent updates and breakages are expected. Entirely unstable.
 
 ## Building
-Typical cmake workflow if you installed LLVM via apt.llvm.org on Ubuntu 20.04:
+
+> **_NOTE:_** We assume that you installed LLVM and Clang in default system folders via [apt.llvm.org](apt.llvm.org) like so
+> ```bash
+> wget https://apt.llvm.org/llvm.sh
+> chmod +x llvm.sh
+> sudo ./llvm.sh 15
+> # also install clang dev
+> sudo apt install libclang-15-dev
+> ```
+
+Typical cmake workflow:
 ```bash
 mkdir build && cd build
 cmake  ../ -DCMAKE_CXX_COMPILER=clang++-15 -DCMAKE_C_COMPILER=clang-15 -DLLVM_DIR=/usr/lib/llvm-15/lib/cmake/ -DClang_DIR=/usr/lib/llvm-15/lib/cmake/clang/
