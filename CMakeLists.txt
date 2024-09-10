@@ -36,3 +36,15 @@ add_subdirectory(reachability)
 add_subdirectory(safefunctioncloner)
 add_subdirectory(safetyanalysis)
 
+# Convenience library to link in by users of llvm-utils
+add_library(llvmutils INTERFACE)
+target_link_libraries(llvmutils INTERFACE
+    util
+    breakconstantgeps
+    callsiteanalysis
+    instrpointoptimization
+    ptrdetectionpass
+    reachability
+    safefunctionclonepass
+    safetyanalysis
+)
