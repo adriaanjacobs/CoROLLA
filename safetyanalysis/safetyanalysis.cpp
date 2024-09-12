@@ -5,6 +5,7 @@
 #include <llvm-utils/pointerdetection/pointerdetection.h>
 #include <llvm-utils/reachability/reachingdefinitions.h>
 #include <llvm-utils/breakconstantgeps/BreakConstantGEPs.h>
+#include <llvm-utils/callsiteanalysis/callsiteanalysis.h>
 
 #include <llvm/IR/IntrinsicsX86.h>
 #include <llvm/IR/Verifier.h>
@@ -263,6 +264,7 @@ llvm::PreservedAnalyses MemAccessInstrumentator::run(llvm::Module &module, llvm:
 void MemAccessInstrumentator::registerAnalyses(llvm::ModuleAnalysisManager &MAM) {
     // Register our analyses
     MAM.registerPass([&] { return UnsafeAccessFinderAnalysis{}; });
+    MAM.registerPass([&] { return CallSiteAnalysis{}; });
     MAM.registerPass([&] { return IsInBoundsAnalysis{}; });
     MAM.registerPass([&] { return PointerDetectionAnalysis{}; });
     MAM.registerPass([&] { return ReachingDefinitionsAnalysis{}; });
