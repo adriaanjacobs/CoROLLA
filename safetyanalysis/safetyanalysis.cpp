@@ -28,8 +28,6 @@
 #include <experimental/array>
 #include <optional>
 #include <cstdint>
-#include <string>
-
 
 UnsafeAccessFinderAnalysis::UnsafeAccessInfo::UnsafeAccessInfo(llvm::Module& module, llvm::ModuleAnalysisManager& MAM, bool onlyStores) :
     module{module}, MAM{MAM}    
@@ -53,8 +51,8 @@ UnsafeAccessFinderAnalysis::UnsafeAccessInfo::UnsafeAccessInfo(llvm::Module& mod
 
                     auto stripOp = pointerDetector.strip_pointer_casts(ptr);
                     bool opaqueglobal = false;
-                    if (llvm::isa<llvm::Constant>(stripOp)) {
-                        assert(isNonWrapperAllocSite(stripOp));
+                    if (!sillyPerls.contains(&instr) && llvm::isa<llvm::Constant>(stripOp)) {
+                        ASSERT_ELSE_UNKOWN(isNonWrapperAllocSite(stripOp), stripOp);
                         if (auto allocBounds = findMinimumAllocBounds(stripOp, module, MAM); allocBounds.has_value() && allocBounds == std::pair{llvm::APInt{64, 0}, llvm::APInt{64, 0}}) {
                             // this is an opaque global, do not instrument
                             opaqueglobal = true;
