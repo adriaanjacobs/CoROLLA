@@ -6,10 +6,14 @@
 extern const llvm::DenseMap<llvm::StringRef, std::function<std::pair<llvm::APInt, llvm::APInt>(llvm::Module&,llvm::ModuleAnalysisManager&,llvm::CallBase*)>> builtinLibcCallToBounds;
 
 std::optional<decltype(builtinLibcCallToBounds)::value_type::second_type> getKnownLibcAllocator(llvm::Function* func) {
+    if (!func->isDeclaration()) // cant be a libc call
+        return std::nullopt;
+    
     auto it = builtinLibcCallToBounds.find(func->getName());
-    if (it != builtinLibcCallToBounds.end() && func->isDeclaration())
+    if (it != builtinLibcCallToBounds.end())
         return it->getSecond();
-    if (func->isDeclaration() && func->hasFnAttribute(llvm::Attribute::NoAlias)) {
+
+    if (func->hasFnAttribute(llvm::Attribute::NoAlias)) {
         llvm::outs() << "We should get to know '" << func->getName() << "'!\n";
         assert(!"Add it to the list of known allocation funcs!");
     }
@@ -24,7 +28,7 @@ bool isKnownLibcAllocator(llvm::Function* func) {
 bool isNonWrapperAllocSite(llvm::Value* val) {
     if (auto callInst = llvm::dyn_cast<llvm::CallBase>(val)) {
         auto calledFunc = callInst->getCalledFunction();
-        return calledFunc && getKnownLibcAllocator(calledFunc);
+        return calledFunc && isKnownLibcAllocator(calledFunc);
     }
     return llvm::isa<llvm::AllocaInst, llvm::GlobalVariable>(val);
 }
@@ -57,10 +61,14 @@ std::optional<std::pair<llvm::APInt, llvm::APInt>> findMinimumAllocBounds(llvm::
     } else if (auto callInst = llvm::dyn_cast<llvm::CallBase>(allocInstr)) {
         auto calledFunc = callInst->getCalledFunction();
         assert(calledFunc);
-        if (auto it = getKnownLibcAllocator(calledFunc)) {
-            if (it.value()) {
-                return it.value()(module, MAM, callInst);
-            } else HANDLE_UNKOWN_VALUE(callInst);
+        if (auto boundsInfo = getKnownLibcAllocator(calledFunc)) {
+            // we know about this function, but we might not know how to compute the bounds info yet
+            if (boundsInfo.value() != nullptr) {
+                return boundsInfo.value()(module, MAM, callInst);
+            } else {
+                // inform `builtinLibcCallToBounds` about how to compute bounds info here
+                HANDLE_UNKOWN_VALUE(callInst);
+            }
         } else {
             // custom allocation wrapper. we shouldnt need this case if we do good callbase transparancy in isInBounds
             return std::nullopt;
@@ -75,6 +83,7 @@ std::pair<llvm::APInt, llvm::APInt> findMmapBounds(llvm::CallBase* callInst, llv
 
 std::pair<llvm::APInt, llvm::APInt> boundsOfReturnedPointeeType(llvm::CallBase* call) {
     auto size = call->getModule()->getDataLayout().getTypeAllocSize(call->getCalledFunction()->getReturnType()->getPointerElementType());
+    // technically this pointer could be to an opaque struct, watch out
     ASSERT_ELSE_UNKOWN(size > 0, call);
     return {llvm::APInt{64, 0}, llvm::APInt{64, size, true}};
 }
@@ -142,7 +151,9 @@ const decltype(builtinLibcCallToBounds) builtinLibcCallToBounds {
     {"gcry_strerror", nullptr},
     {"gcry_strsource", nullptr},
     {"getgrgid", nullptr},
-    {"getgrnam", nullptr},
+    {"getgrnam", [] (llvm::Module& module, llvm::ModuleAnalysisManager& MAM, llvm::CallBase* callInst) -> std::pair<llvm::APInt, llvm::APInt> {
+        return boundsOfReturnedPointeeType(callInst);
+    }},
     {"gethostbyaddr", nullptr},
     {"gethostbyname", nullptr},
     {"gethostbyname2", nullptr},
