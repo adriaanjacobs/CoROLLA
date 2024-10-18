@@ -46,8 +46,8 @@ llvm::Value* tryExpandSCEV(llvm::Module& module, llvm::ModuleAnalysisManager& MA
 void hoistLoopBoundMemAccesses(llvm::Module& module, llvm::ModuleAnalysisManager& MAM, llvm::DenseMap<llvm::Function*, llvm::DenseMap<llvm::Instruction*, llvm::DenseSet<InstrumentationPoint*>>>& funcToInstPoints) {
     auto& context = module.getContext();
 
-    size_t logsInLoops = 0;
-    size_t hoistedLogs = 0;
+    size_t pointsInLoops = 0;
+    size_t hoistedPoints = 0;
     size_t noMustExecuteLoopInvariant = 0;
 
     size_t cantComputeBackEdgeCount = 0;
@@ -89,7 +89,7 @@ void hoistLoopBoundMemAccesses(llvm::Module& module, llvm::ModuleAnalysisManager
                 for (auto& [point, _] : pointToInstructions) 
                     ptrToPoints[pointerDetector.strip_pointer_casts(point->pointerOperand)].insert(point);
                 for (auto& [_, points] : ptrToPoints) {
-                    // it's possible that the summarization transformation resulted in the logging of the same evidence at the same location
+                    // it's possible that the summarization transformation resulted in multiple of the same points at the same location
                     // fix up places where that happened
 
                     llvm::DenseMap<llvm::Instruction*, llvm::DenseSet<InstrumentationPoint*>> insertBfToPoints;
@@ -111,7 +111,7 @@ void hoistLoopBoundMemAccesses(llvm::Module& module, llvm::ModuleAnalysisManager
                         assert(points.size() == 1);
                     }
 
-                    // no location contains multiple logs of the same evidence
+                    // no location contains multiple of the same points
 
                     // is it possible to reach each point from the function entry without passing through any of the other points?
                     llvm::DenseSet<llvm::Instruction*> exclusionSet;
@@ -156,14 +156,14 @@ void hoistLoopBoundMemAccesses(llvm::Module& module, llvm::ModuleAnalysisManager
                         assert(!loopPoints.empty());
                         auto preheader = loop->getLoopPreheader();
                         assert(!funcTerminators.empty());
-                        // are any of the function exits reachable from the preheader without logging the evidence?
-                        // if not -> we can safely log the evidence from the preheader
+                        // are any of the function exits reachable from the preheader without going through the original point?
+                        // if not -> we can safely move this point to the preheader
                         auto anyTermReachable = llvm::any_of(funcTerminators, [&] (llvm::Instruction* term) -> bool {
                             return !exclusionSet.contains(&preheader->front()) && ::isPotentiallyReachable(&preheader->front(), term, exclusionSet, &domTree, &loopInfo);
                         });
                         if (!anyTermReachable) {
-                            // we can safely log this evidence in the preheader
-                            // only log this evidence once: erase all except 1 from the func points
+                            // we can safely move this point to the preheader
+                            // only insert the point once: erase all except 1 from the func points
                             assert(!loopPoints.empty());
                             llvm::DenseSet<llvm::Instruction*> insts;
                             for (auto point : loopPoints) {
@@ -195,7 +195,7 @@ void hoistLoopBoundMemAccesses(llvm::Module& module, llvm::ModuleAnalysisManager
                 if (auto loop = loopInfo.getLoopFor(point->insertBefore->getParent())) {
                     // gcc has loops which dont seem to be in this form
                     // assert(loop->isLoopSimplifyForm());
-                    logsInLoops += !i;
+                    pointsInLoops += !i;
                     auto preheader = loop->getLoopPreheader();
                     assert(preheader);
                     assert(point->insertBefore->getParent() != preheader);
@@ -205,8 +205,8 @@ void hoistLoopBoundMemAccesses(llvm::Module& module, llvm::ModuleAnalysisManager
                     const bool hoistable = isHoistable(point);
                     {
                         llvm::MustBeExecutedContextExplorer explorer = getMustBeExecutedContextExplorer(FAM, true, false);
-                        bool logMustExecute = explorer.findInContextOf(point->insertBefore, preheader->getTerminator());
-                        if (logMustExecute) {
+                        bool pointMustExecute = explorer.findInContextOf(point->insertBefore, preheader->getTerminator());
+                        if (pointMustExecute) {
                             if (!hoistable)
                                 llvm::outs() << "pointerOperand: " << *point->pointerOperand << "\n";
                             ASSERT_ELSE_UNKOWN(hoistable, point->insertBefore);
@@ -219,7 +219,7 @@ void hoistLoopBoundMemAccesses(llvm::Module& module, llvm::ModuleAnalysisManager
                         if (hoistable) {
                             assert(domTree.dominates(point->pointerOperand, preheader->getTerminator()));
                             point->insertBefore = preheader->getTerminator();
-                            hoistedLogs += !i;
+                            hoistedPoints += !i;
                             change = true;
                         } else noMustExecuteLoopInvariant += !i;
                     } else {
@@ -322,7 +322,7 @@ void hoistLoopBoundMemAccesses(llvm::Module& module, llvm::ModuleAnalysisManager
                 instPoints[inst].insert(point);
         
         // the number of described instructions can be different here than originally,
-        // because the split-dom check might remove logs entirely
+        // because the split-dom check might remove points entirely
     }
 
 #if DEBUG_IV_INDEPENDENT_LOGS
@@ -340,15 +340,15 @@ void hoistLoopBoundMemAccesses(llvm::Module& module, llvm::ModuleAnalysisManager
     }
 #endif
 
-    llvm::outs() << logsInLoops << " logs in loops:\n";
-    llvm::outs() << "\t"<< (hoistedLogs + noMustExecuteLoopInvariant) << "/" << logsInLoops << " are loop invariant.\n";
-        llvm::outs() << "\t\t" << hoistedLogs << "/" << (hoistedLogs + noMustExecuteLoopInvariant) << " hoisted to preheader.\n";
-        llvm::outs() << "\t\t" << noMustExecuteLoopInvariant << "/" << (hoistedLogs + noMustExecuteLoopInvariant) << " are not guaranteed to execute.\n";
-    llvm::outs() << "\t" << operandDependsOnIV << "/" << logsInLoops << " depend on the IV.\n";
+    llvm::outs() << pointsInLoops << " points in loops:\n";
+    llvm::outs() << "\t"<< (hoistedPoints + noMustExecuteLoopInvariant) << "/" << pointsInLoops << " are loop invariant.\n";
+        llvm::outs() << "\t\t" << hoistedPoints << "/" << (hoistedPoints + noMustExecuteLoopInvariant) << " hoisted to preheader.\n";
+        llvm::outs() << "\t\t" << noMustExecuteLoopInvariant << "/" << (hoistedPoints + noMustExecuteLoopInvariant) << " are not guaranteed to execute.\n";
+    llvm::outs() << "\t" << operandDependsOnIV << "/" << pointsInLoops << " depend on the IV.\n";
         llvm::outs() << "\t\t" << cantComputeBackEdgeCount << "/" << operandDependsOnIV << " have no computable backEdgeTakenCount\n";
         llvm::outs() << "\t\t" << "We can compute " << (operandDependsOnIV - cantComputeBackEdgeCount) << "/" << operandDependsOnIV << " backEdgeTakenCounts.\n";
             llvm::outs() << "\t\t\t" << (unexpandableExitvalue + exitValueComputed) << "/" << operandDependsOnIV << " must execute once the preheader is reached.\n";
                 llvm::outs() << "\t\t\t\t" << exitValueComputed << "/" << (unexpandableExitvalue + exitValueComputed) << " can be expanded & hoisted\n";
 
-    llvm::outs() << "\t" << operandDoesNotDependOnIV << "/" << logsInLoops << " DO NOT depend on the IV.\n";
+    llvm::outs() << "\t" << operandDoesNotDependOnIV << "/" << pointsInLoops << " DO NOT depend on the IV.\n";
 }
