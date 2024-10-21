@@ -3,6 +3,23 @@
 #include <llvm-utils/util.h>
 #include <llvm-utils/safetyanalysis/allocationbounds.h>
 
+// simple loop-bound pointer iteration check
+// returns null if unsuccessful (i.e. it did nothing)
+llvm::Value* findLoopBoundPHIBase(llvm::PHINode* phi, llvm::ScalarEvolution& SCEV) {
+    // ive had `getPointerBase` fail for loop-bound pointers using ptrtoint ints (e.g. reverse_iterator)
+    // so definitely keep the fallback case!
+    auto baseSCEV = SCEV.getPointerBase(SCEV.getSCEV(phi));
+    auto baseUnknownSCEV = llvm::dyn_cast<llvm::SCEVUnknown>(baseSCEV);
+    if (!baseUnknownSCEV)
+        return nullptr;
+
+    auto base = baseUnknownSCEV->getValue();
+    if (base == phi) // otherwise we did nothing, e.g., if the phi was not loop-bound
+        return nullptr;
+
+    return base;
+}
+
 llvm::Value* PointerDetector::find_real_base(llvm::Value *arithmetic) const {
     static thread_local std::vector<const llvm::Value*> passedInstrs;
     const auto size = passedInstrs.size();
@@ -66,13 +83,11 @@ llvm::Value* PointerDetector::find_real_base(llvm::Value *arithmetic) const {
                     llvm::outs() << "constPhi: " << *constVal << "\n";
                 }
                 assert(domTree.dominates(constVal, phiNode));
+                ASSERT_ELSE_UNKOWN(current != constVal, current);
                 current = constVal;
-            } else if (auto baseSCEV = SCEV.getPointerBase(SCEV.getSCEV(phiNode)); llvm::isa<llvm::SCEVUnknown>(baseSCEV)) { 
-                // simple loop-bound pointer iteration check
-                // ive had `getPointerBase` fail for loop-bound pointers using ptrtoint ints (e.g. reverse_iterator)
-                // so definitely keep the fallback case!
-                auto base = llvm::cast<llvm::SCEVUnknown>(baseSCEV)->getValue();
-                current = base;
+            } else if (auto loopBoundPHIBase = findLoopBoundPHIBase(phiNode, SCEV)) {
+                ASSERT_ELSE_UNKOWN(current != loopBoundPHIBase, current);
+                current = loopBoundPHIBase;
             } else { // fallback case
                 // as a last-ditch effort, we check if all incomingvalues happen to have the same commonbase
                 //  if so, we can continue through it with the commonbase
@@ -82,7 +97,7 @@ llvm::Value* PointerDetector::find_real_base(llvm::Value *arithmetic) const {
                 llvm::Value* commonBase = nullptr;
                 auto firstIt = llvm::find_if(phiNode->incoming_values(), [&] (llvm::Value* val) -> bool {
                     auto base = find_real_base(val);
-                    if (base != val) {
+                    if (base != phiNode) {
                         commonBase = base;
                         return true;
                     }
@@ -96,31 +111,29 @@ llvm::Value* PointerDetector::find_real_base(llvm::Value *arithmetic) const {
                 // continue with the rest of the incoming values and check whether they have the same commonbase
                 for (auto it = firstIt + 1; it != phiNode->incoming_values().end(); it++) {
                     auto base = find_real_base(*it);
-                    if (base != *it && base != commonBase) {
+                    if (base != commonBase) {
                         // not recursive but also not the same as what we found already
                         done = true;
                         break;
                     }
                 }
 
-                assert(!done);
-                current = commonBase;
+                if (!done) {
+                    ASSERT_ELSE_UNKOWN(current != commonBase, current);
+                    current = commonBase;
+                }
             }
         } else if (auto selectInst = llvm::dyn_cast<llvm::SelectInst>(current)) {
             auto baseIfTrue = find_real_base(selectInst->getTrueValue());
             auto baseIfFalse = find_real_base(selectInst->getFalseValue());
 
-            // both options of the select are self-referential??
-            //      maybe this is possible, idk
-            ASSERT_ELSE_UNKOWN(
-                baseIfTrue != selectInst->getTrueValue() 
-                || baseIfFalse != selectInst->getFalseValue()
-            , selectInst);
+            ASSERT_ELSE_UNKOWN(baseIfTrue != selectInst && baseIfFalse != selectInst, selectInst);
 
-            if (baseIfTrue != selectInst->getTrueValue() && baseIfTrue == baseIfFalse) {
-                // both of them are non-recursive and equal
+            if (baseIfTrue == baseIfFalse) {
+                ASSERT_ELSE_UNKOWN(current != baseIfTrue, current);
                 current = baseIfTrue;
             } else {
+                // we gotta stop, we can't find a common base
                 done = true;
             }
         } else if (isNonWrapperAllocSite(current) 
@@ -151,8 +164,10 @@ llvm::Value* PointerDetector::find_real_base(llvm::Value *arithmetic) const {
         }
 
         if (oldCurrent == current)
-            assert(done);
+            ASSERT_ELSE_UNKOWN(done, current);
     }
+
+    assert(done);
 
     return current;
 }
