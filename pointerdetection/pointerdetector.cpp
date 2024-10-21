@@ -238,7 +238,7 @@ llvm::Value* PointerDetector::find_real_base(llvm::Value *arithmetic) const {
         } else if (auto phiNode = llvm::dyn_cast<llvm::PHINode>(current)) {
             auto& FAM = getFAM(module, MAM);
             auto& loopInfo = FAM.getResult<llvm::LoopAnalysis>(*phiNode->getFunction());
-            auto& scev = FAM.getResult<llvm::ScalarEvolutionAnalysis>(*phiNode->getFunction());
+            auto& SCEV = FAM.getResult<llvm::ScalarEvolutionAnalysis>(*phiNode->getFunction());
             auto& domTree = FAM.getResult<llvm::DominatorTreeAnalysis>(*phiNode->getFunction());
             if (auto constVal = phiNode->hasConstantValue()) {
                 if (!domTree.dominates(constVal, phiNode)) {
@@ -247,10 +247,12 @@ llvm::Value* PointerDetector::find_real_base(llvm::Value *arithmetic) const {
                 }
                 assert(domTree.dominates(constVal, phiNode));
                 current = constVal;
-            } else if (auto loop = loopInfo.getLoopFor(phiNode->getParent()); loop && loop->isAuxiliaryInductionVariable(*phiNode, scev)) {
-                // alternative to below: get replacement expr for phinode, remove steps
-                // getValue()
-
+            } else if (auto baseSCEV = SCEV.getPointerBase(SCEV.getSCEV(phiNode)); llvm::isa<llvm::SCEVUnknown>(baseSCEV)) { 
+                // simple loop-bound pointer iteration check
+                // ive had `getPointerBase` fail for loop-bound pointers using ptrtoint ints (e.g. reverse_iterator)
+                // so definitely keep the fallback case!
+                auto base = llvm::cast<llvm::SCEVUnknown>(baseSCEV)->getValue();
+                current = base;
             } else { // fallback case
                 // as a last-ditch effort, we check if all incomingvalues happen to have the same commonbase
                 //  if so, we can continue through it with the commonbase
@@ -264,22 +266,24 @@ llvm::Value* PointerDetector::find_real_base(llvm::Value *arithmetic) const {
                         commonBase = base;
                         return true;
                     }
-                }
-                assert(nonLoopIncomingBlockIdx != -1);
-                llvm::outs() << "We did it!!!!\n";
-                current = phiNode->getIncomingValue(nonLoopIncomingBlockIdx);
-            } else { // fallback case
-                // here, if the result of find_real_base is the same as phiNode, we can ignore that incomingVal, it's cool
-                auto commonbase = find_real_base(phiNode->getIncomingValue(0));
-                for (uint i = 1; i < phiNode->getNumIncomingValues(); i++) {
-                    if (commonbase != find_real_base(phiNode->getIncomingValue(i))) {
+                    return false;
+                });
+
+                // we've seen all phinode values before? that's impossible!
+                ASSERT_ELSE_UNKOWN(firstIt != phiNode->incoming_values().end(), phiNode);
+                assert(commonBase); // no way it's null here
+
+                // continue with the rest of the incoming values and check whether they have the same commonbase
+                for (auto it = firstIt + 1; it != phiNode->incoming_values().end(); it++) {
+                    auto base = getRealBaseIfNotPassed(*it);
+                    if (base && base != commonBase) {
                         done = true;
                         break;
                     }
                 }
-                
-                if (!done) 
-                    current = commonbase;
+
+                assert(!done);
+                current = commonBase;
             }
         } else if (auto selectInst = llvm::dyn_cast<llvm::SelectInst>(current)) {
             auto baseIfTrue = getRealBaseIfNotPassed(selectInst->getTrueValue());
