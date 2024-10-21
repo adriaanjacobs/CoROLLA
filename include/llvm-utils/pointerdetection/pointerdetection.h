@@ -36,6 +36,9 @@ public:
 struct PointerDetector {
     llvm::DenseSet<llvm::Value*> pointers;
     llvm::DenseSet<llvm::Value*> negatedPointers;
+    // mutable because stupid me marked the PointerDetector as const everywhere 
+    //  and i guess caches are kinda the only valid use case for mutable ??
+    mutable llvm::DenseMap<llvm::Value*, llvm::Value*> pointerToRealBase;
 
     enum ValueType { NEGATED_POINTER = -1, INTEGER = 0, POINTER = 1 };
 

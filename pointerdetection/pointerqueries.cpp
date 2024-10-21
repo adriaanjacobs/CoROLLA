@@ -28,8 +28,11 @@ llvm::Value* PointerDetector::find_real_base(llvm::Value *arithmetic) const {
         passedInstrs.erase(passedInstrs.begin() + size, passedInstrs.end());
     });
 
-    if (llvm::is_contained(passedInstrs, arithmetic)) 
+    if (llvm::is_contained(passedInstrs, arithmetic)) {
+        // expensive dude, cache!
+        pointerToRealBase[arithmetic] = arithmetic;
         return arithmetic;
+    }
 
     auto current = arithmetic;
     bool done = false;
@@ -39,6 +42,10 @@ llvm::Value* PointerDetector::find_real_base(llvm::Value *arithmetic) const {
         assert(current);
         auto oldCurrent = current;
         passedInstrs.push_back(current);
+
+        if (auto it = pointerToRealBase.find(arithmetic); it != pointerToRealBase.end()) 
+            return it->getSecond();
+
         if (auto gepOperator = llvm::dyn_cast<llvm::GEPOperator>(current)) {
             current = gepOperator->getPointerOperand();
         } else if (auto binaryOp = llvm::dyn_cast<llvm::BinaryOperator>(current)) {
@@ -114,6 +121,7 @@ llvm::Value* PointerDetector::find_real_base(llvm::Value *arithmetic) const {
                     if (base != commonBase) {
                         // not recursive but also not the same as what we found already
                         done = true;
+                        pointerToRealBase[current] = current; // was a tough one to compute
                         break;
                     }
                 }
@@ -132,9 +140,11 @@ llvm::Value* PointerDetector::find_real_base(llvm::Value *arithmetic) const {
             if (baseIfTrue == baseIfFalse) {
                 ASSERT_ELSE_UNKOWN(current != baseIfTrue, current);
                 current = baseIfTrue;
+                pointerToRealBase[current] = baseIfTrue;
             } else {
                 // we gotta stop, we can't find a common base
                 done = true;
+                pointerToRealBase[current] = current;
             }
         } else if (isNonWrapperAllocSite(current) 
                     || llvm::isa<llvm::ConstantPointerNull, llvm::UndefValue, llvm::LoadInst, llvm::ExtractValueInst,
