@@ -28,11 +28,8 @@ llvm::Value* PointerDetector::find_real_base(llvm::Value *arithmetic) const {
         passedInstrs.erase(passedInstrs.begin() + size, passedInstrs.end());
     });
 
-    if (llvm::is_contained(passedInstrs, arithmetic)) {
-        // expensive dude, cache!
-        pointerToRealBase[arithmetic] = arithmetic;
+    if (llvm::is_contained(passedInstrs, arithmetic)) 
         return arithmetic;
-    }
 
     auto current = arithmetic;
     bool done = false;
