@@ -182,8 +182,17 @@ llvm::Value* PointerDetector::find_real_base(llvm::Value *arithmetic) const {
         passedInstrs.erase(passedInstrs.begin() + size, passedInstrs.end());
     });
 
-    if (llvm::is_contained(passedInstrs, arithmetic))
+    if (llvm::is_contained(passedInstrs, arithmetic)) {
+        llvm::errs() << "\t" << *arithmetic << "\n";
+        assert(false);
         return arithmetic;
+    }
+
+    auto getRealBaseIfNotPassed = [&] (llvm::Value* val) -> llvm::Value* {
+        if (llvm::is_contained(passedInstrs, val))
+            return nullptr;
+        return find_real_base(val);
+    };
 
     auto current = arithmetic;
     bool done = false;
@@ -225,7 +234,6 @@ llvm::Value* PointerDetector::find_real_base(llvm::Value *arithmetic) const {
                         llvm::outs() << "\t" << *inst << "\n";
                     HANDLE_UNKOWN_VALUE(castInst);
                 }
-                    
             }
         } else if (auto phiNode = llvm::dyn_cast<llvm::PHINode>(current)) {
             auto& FAM = getFAM(module, MAM);
@@ -243,12 +251,18 @@ llvm::Value* PointerDetector::find_real_base(llvm::Value *arithmetic) const {
                 // alternative to below: get replacement expr for phinode, remove steps
                 // getValue()
 
-                int nonLoopIncomingBlockIdx = -1;
-                for (uint i = 0; i < phiNode->getNumIncomingValues(); i++) {
-                    auto incmngBlock = phiNode->getIncomingBlock(i);
-                    if (!loop->contains(incmngBlock)) {
-                        assert(nonLoopIncomingBlockIdx == -1);
-                        nonLoopIncomingBlockIdx = i;
+            } else { // fallback case
+                // as a last-ditch effort, we check if all incomingvalues happen to have the same commonbase
+                //  if so, we can continue through it with the commonbase
+
+                // first, find the first non-recursive phi
+                //  all recursive incoming values may be ignored, they cyclically depend on this phiNode -> they are not the base
+                llvm::Value* commonBase = nullptr;
+                auto firstIt = llvm::find_if(phiNode->incoming_values(), [&] (llvm::Value* val) -> bool {
+                    auto base = getRealBaseIfNotPassed(val);
+                    if (base) {
+                        commonBase = base;
+                        return true;
                     }
                 }
                 assert(nonLoopIncomingBlockIdx != -1);
@@ -268,11 +282,19 @@ llvm::Value* PointerDetector::find_real_base(llvm::Value *arithmetic) const {
                     current = commonbase;
             }
         } else if (auto selectInst = llvm::dyn_cast<llvm::SelectInst>(current)) {
-            auto commonbase = find_real_base(selectInst->getTrueValue());
-            if (commonbase != find_real_base(selectInst->getFalseValue()))
+            auto baseIfTrue = getRealBaseIfNotPassed(selectInst->getTrueValue());
+            auto baseIfFalse = getRealBaseIfNotPassed(selectInst->getFalseValue());
+
+            // both options of the select are self-referential??
+            //      maybe this is possible, idk
+            ASSERT_ELSE_UNKOWN(!baseIfTrue && !baseIfFalse, selectInst);
+
+            if (baseIfTrue && baseIfTrue == baseIfFalse) {
+                // both of them are non-null and equal
+                current = baseIfTrue;
+            } else {
                 done = true;
-            else 
-                current = commonbase;
+            }
         } else if (isNonWrapperAllocSite(current) 
                     || llvm::isa<llvm::ConstantPointerNull, llvm::UndefValue, llvm::LoadInst, llvm::ExtractValueInst,
                                 llvm::ExtractElementInst, llvm::Argument, llvm::CallBase, llvm::PHINode, llvm::SelectInst>(current)
