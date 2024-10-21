@@ -11,17 +11,8 @@ llvm::Value* PointerDetector::find_real_base(llvm::Value *arithmetic) const {
         passedInstrs.erase(passedInstrs.begin() + size, passedInstrs.end());
     });
 
-    if (llvm::is_contained(passedInstrs, arithmetic)) {
-        llvm::errs() << "\t" << *arithmetic << "\n";
-        assert(false);
+    if (llvm::is_contained(passedInstrs, arithmetic)) 
         return arithmetic;
-    }
-
-    auto getRealBaseIfNotPassed = [&] (llvm::Value* val) -> llvm::Value* {
-        if (llvm::is_contained(passedInstrs, val))
-            return nullptr;
-        return find_real_base(val);
-    };
 
     auto current = arithmetic;
     bool done = false;
@@ -90,8 +81,8 @@ llvm::Value* PointerDetector::find_real_base(llvm::Value *arithmetic) const {
                 //  all recursive incoming values may be ignored, they cyclically depend on this phiNode -> they are not the base
                 llvm::Value* commonBase = nullptr;
                 auto firstIt = llvm::find_if(phiNode->incoming_values(), [&] (llvm::Value* val) -> bool {
-                    auto base = getRealBaseIfNotPassed(val);
-                    if (base) {
+                    auto base = find_real_base(val);
+                    if (base != val) {
                         commonBase = base;
                         return true;
                     }
@@ -104,8 +95,9 @@ llvm::Value* PointerDetector::find_real_base(llvm::Value *arithmetic) const {
 
                 // continue with the rest of the incoming values and check whether they have the same commonbase
                 for (auto it = firstIt + 1; it != phiNode->incoming_values().end(); it++) {
-                    auto base = getRealBaseIfNotPassed(*it);
-                    if (base && base != commonBase) {
+                    auto base = find_real_base(*it);
+                    if (base != *it && base != commonBase) {
+                        // not recursive but also not the same as what we found already
                         done = true;
                         break;
                     }
@@ -115,15 +107,18 @@ llvm::Value* PointerDetector::find_real_base(llvm::Value *arithmetic) const {
                 current = commonBase;
             }
         } else if (auto selectInst = llvm::dyn_cast<llvm::SelectInst>(current)) {
-            auto baseIfTrue = getRealBaseIfNotPassed(selectInst->getTrueValue());
-            auto baseIfFalse = getRealBaseIfNotPassed(selectInst->getFalseValue());
+            auto baseIfTrue = find_real_base(selectInst->getTrueValue());
+            auto baseIfFalse = find_real_base(selectInst->getFalseValue());
 
             // both options of the select are self-referential??
             //      maybe this is possible, idk
-            ASSERT_ELSE_UNKOWN(!baseIfTrue && !baseIfFalse, selectInst);
+            ASSERT_ELSE_UNKOWN(
+                baseIfTrue != selectInst->getTrueValue() 
+                || baseIfFalse != selectInst->getFalseValue()
+            , selectInst);
 
-            if (baseIfTrue && baseIfTrue == baseIfFalse) {
-                // both of them are non-null and equal
+            if (baseIfTrue != selectInst->getTrueValue() && baseIfTrue == baseIfFalse) {
+                // both of them are non-recursive and equal
                 current = baseIfTrue;
             } else {
                 done = true;
