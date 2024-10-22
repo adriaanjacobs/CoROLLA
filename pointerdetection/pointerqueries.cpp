@@ -216,7 +216,7 @@ llvm::Value* PointerDetector::strip_pointer_casts(llvm::Value *pointer) const {
             assert((!llvm::isa<llvm::UndefValue, llvm::PoisonValue>(freeze->getOperand(0))));
             pointer = freeze->getOperand(0);
         } else if (llvm::isa<llvm::AllocaInst, llvm::GlobalVariable, llvm::ConstantPointerNull, llvm::ConstantInt, 
-                                llvm::Function, llvm::LoadInst, llvm::ExtractElementInst, llvm::Argument, 
+                                llvm::Function, llvm::LoadInst, llvm::ExtractElementInst, llvm::ExtractValueInst, llvm::Argument, 
                                 llvm::CallBase, llvm::PHINode, llvm::SelectInst>(pointer)
         ) {
             break;
