@@ -81,6 +81,7 @@ public:
 
         llvm::Module& module;
         llvm::ModuleAnalysisManager& MAM;
+        const bool onlyStores;
 
         llvm::DenseSet<llvm::Instruction *> unsafeAccesses;
     private: 
@@ -102,6 +103,8 @@ public:
         return Result{M, MAM};
     }
 };
+
+using UnsafeAccessInfo = UnsafeAccessFinderAnalysis::UnsafeAccessInfo;
 
 //===----------------------------------------------------------------------===//
 /// This class implements an LLVM module transformation pass.

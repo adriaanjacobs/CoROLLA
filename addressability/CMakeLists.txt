@@ -1,0 +1,2 @@
+add_library(addressability SHARED addressability.cpp)
+target_link_libraries(addressability util safetyanalysis callsiteanalysis)

@@ -30,7 +30,7 @@
 #include <cstdint>
 
 UnsafeAccessFinderAnalysis::UnsafeAccessInfo::UnsafeAccessInfo(llvm::Module& module, llvm::ModuleAnalysisManager& MAM, bool onlyStores) :
-    module{module}, MAM{MAM}    
+    module{module}, MAM{MAM}, onlyStores{onlyStores}
 {
     srand(time(NULL));
 
