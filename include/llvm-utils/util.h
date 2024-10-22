@@ -245,3 +245,12 @@ llvm::SmallVector<llvm::Function*> getKnownCallees(llvm::CallBase* call);
 llvm::Instruction* normalInsertionPtAfter(llvm::Instruction* inst);
 
 llvm::APInt findMinimumUnsignedValue(llvm::Value* val, llvm::Function* context, llvm::ModuleAnalysisManager& MAM);
+
+// i thought CreateBitOrPointerCast already did this check, but no
+//  so here we go
+llvm::Value* createBitOrPointerCastIfNecessary(
+    llvm::Value *S,                             ///< The pointer value to be casted (operand 0)
+    llvm::Type *Ty,                             ///< The type to which cast should be made
+    const llvm::Twine &Name = "",               ///< Name for the instruction
+    llvm::Instruction *InsertBefore = nullptr   ///< Place to insert the instruction
+);

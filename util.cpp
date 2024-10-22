@@ -91,6 +91,13 @@ llvm::Value* castToInt64Ty(llvm::Value* val, llvm::Instruction* insertBefore, ll
     return val;
 }
 
+// check if the cast is necessary first, otherwise fallback immediately
+llvm::Value* createBitOrPointerCastIfNecessary(llvm::Value* S, llvm::Type* Ty, const llvm::Twine& Name, llvm::Instruction* InsertBefore) {
+    if (S->getType() == Ty)
+        return S;
+    return llvm::CastInst::CreateBitOrPointerCast(S, Ty, Name, InsertBefore);
+}
+
 std::string getModuleHash(llvm::Module& module) {
     size_t bbcount = 0;
     size_t instcount = 0;
