@@ -8,6 +8,12 @@
 //  "safe"/"unsafe" is kind of an over-statement here
 //  more like "may be used as pointer operand in the unsafeaccesses"
 bool ptrMayReachUnsafeAccesses(llvm::Value* ptr, const UnsafeAccessInfo& unsafeAccessInfo, const CallSiteAnalysisResult& callSiteAnalysis) {
+    // special case: public globals may always reach unsafe accesses
+    if (auto globalValue = llvm::dyn_cast<llvm::GlobalValue>(ptr)) {
+        if (!globalValue->hasLocalLinkage())
+            return true;
+    }
+    
     static thread_local std::vector<llvm::Value*> passedInstrs;
     const auto size = passedInstrs.size();
     run_on_destruct resetPassedInstrs([&](){
