@@ -95,6 +95,12 @@ bool ptrMayReachUnsafeAccesses(llvm::Value* ptr, const UnsafeAccessInfo& unsafeA
                 return !llvm::isa<llvm::ConstantData>(notTheUser); // catches trivial comparisons against MAP_FAILED or NULL
             } else if (llvm::isa<llvm::GEPOperator, llvm::BinaryOperator>(user)) {
                 return ptrMayReachUnsafeAccesses(user, unsafeAccessInfo, callSiteAnalysis); // any offset doesn't matter, later load/stores will query the safety status
+            } else if (auto landingPad = llvm::dyn_cast<llvm::LandingPadInst>(user)) {
+                // this happens e.g. for type_info globals that are used in catch or filter clauses as the representation for the type of the exception
+                //  this is not the same as an icmp, since there is no expectation after this check that any IR-level data has the value of this global
+                //  the global _has_ to leak some other way 
+                ASSERT_ELSE_UNKOWN(llvm::isa<llvm::Constant>(ptr), ptr); // just havent really considered non-constants yet
+                return false;
             } else HANDLE_UNKOWN_VALUE(user);
         } ();
 
