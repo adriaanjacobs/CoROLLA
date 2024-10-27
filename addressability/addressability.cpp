@@ -10,7 +10,10 @@
 bool ptrMayReachUnsafeAccesses(llvm::Value* ptr, const UnsafeAccessInfo& unsafeAccessInfo, const CallSiteAnalysisResult& callSiteAnalysis) {
     // special case: public globals may always reach unsafe accesses
     if (auto globalValue = llvm::dyn_cast<llvm::GlobalValue>(ptr)) {
-        if (!globalValue->hasLocalLinkage())
+        // appending linkage is an LLVM thing that only makes sense for LLVM-visible symbols
+        //  no external code will observe the symbol as public 
+        //      im not 100% sure on whether this is _technically_ impossible, but it definitely doesnt happen
+        if (!(globalValue->hasLocalLinkage() || globalValue->hasAppendingLinkage()))
             return true;
     }
     
