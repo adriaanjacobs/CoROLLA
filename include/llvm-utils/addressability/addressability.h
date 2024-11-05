@@ -12,3 +12,5 @@ bool ptrMayReachUnsafeAccesses(llvm::Value* ptr, const UnsafeAccessInfo& unsafeA
 // returns a mapping between the inserted wrapper function and the wrapped ("internalized") function
 // the "internalized" functions are suitable for invasive transformations like signature changes etc.
 llvm::DenseMap<llvm::Function*, llvm::Function*> wrapAddressTakenFuncs(llvm::Module& module, llvm::ModuleAnalysisManager& MAM);
+
+void collectIntraProceduralPtrEscapes(llvm::Value* ptr, llvm::DenseSet<llvm::Use*> ptrEscapes);
