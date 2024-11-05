@@ -20,7 +20,7 @@ llvm::Value* findLoopBoundPHIBase(llvm::PHINode* phi, llvm::ScalarEvolution& SCE
     return base;
 }
 
-llvm::Value* PointerDetector::find_real_base(llvm::Value *arithmetic) const {
+std::pair<llvm::Value*, bool> PointerDetector::find_real_base(llvm::Value *arithmetic) const {
     static thread_local std::vector<const llvm::Value*> passedInstrs;
     const auto size = passedInstrs.size();
     run_on_destruct resetPassedInstrs([&](){
@@ -29,69 +29,47 @@ llvm::Value* PointerDetector::find_real_base(llvm::Value *arithmetic) const {
     });
 
     if (llvm::is_contained(passedInstrs, arithmetic)) 
-        return arithmetic;
+        return {arithmetic, false}; // compared to the value we entered with, this wasn't offseted
 
     auto current = arithmetic;
     bool done = false;
     const auto& dataLayout = module.getDataLayout();
+    bool offseted = false;
 
     while (!done) {
         assert(current);
         auto oldCurrent = current;
         passedInstrs.push_back(current);
 
-        if (auto it = pointerToRealBase.find(arithmetic); it != pointerToRealBase.end()) 
-            return it->getSecond();
+        if (auto it = pointerToRealBase.find(arithmetic); it != pointerToRealBase.end()) {
+            auto [cachedBase, cachedBaseOffseted] = it->getSecond();
+            return {cachedBase, cachedBaseOffseted || offseted};
+        }
+
+        // this ensures that all subsequent operations probably modify the pointer
+        current = strip_pointer_casts(current);
 
         if (auto gepOperator = llvm::dyn_cast<llvm::GEPOperator>(current)) {
             current = gepOperator->getPointerOperand();
+            offseted = true;
         } else if (auto binaryOp = llvm::dyn_cast<llvm::BinaryOperator>(current)) {
             auto binOpTypes = findBinaryOpValueTypes(binaryOp);
             if (!binOpTypes.has_value()) 
                 done = true;
-            else 
+            else {
                 current = binOpTypes->pointerOperand;
-        } else if (auto bitcastOp = llvm::dyn_cast<llvm::BitCastOperator>(current)) {
-            current = bitcastOp->getOperand(0);
-        } else if (auto castInst = llvm::dyn_cast<llvm::CastInst>(current)) {
-            switch (castInst->getOpcode()) {
-                case llvm::Instruction::FPToSI: // fuck this
-                case llvm::Instruction::FPToUI:
-                case llvm::Instruction::SExt:
-                case llvm::Instruction::ZExt:
-                    ASSERT_ELSE_UNKOWN(dataLayout.getTypeSizeInBits(castInst->getType()) == 64, castInst);
-                    done = true;
-                    break;
-                case llvm::Instruction::CastOps::IntToPtr:
-                case llvm::Instruction::CastOps::PtrToInt:
-                    assert(castInst->isNoopCast(dataLayout));
-                [[fallthrough]];
-                case llvm::Instruction::CastOps::BitCast: {
-                    current = castInst->getOperand(0);
-                } break;
-                default: {
-                    llvm::outs() << "passed instructions leading up:\n";
-                    for (auto inst : passedInstrs)
-                        llvm::outs() << "\t" << *inst << "\n";
-                    HANDLE_UNKOWN_VALUE(castInst);
-                }
+                offseted = true;
             }
         } else if (auto phiNode = llvm::dyn_cast<llvm::PHINode>(current)) {
             auto& FAM = getFAM(module, MAM);
             auto& loopInfo = FAM.getResult<llvm::LoopAnalysis>(*phiNode->getFunction());
             auto& SCEV = FAM.getResult<llvm::ScalarEvolutionAnalysis>(*phiNode->getFunction());
             auto& domTree = FAM.getResult<llvm::DominatorTreeAnalysis>(*phiNode->getFunction());
-            if (auto constVal = phiNode->hasConstantValue()) {
-                if (!domTree.dominates(constVal, phiNode)) {
-                    llvm::outs() << "phiNode: " << *phiNode << "\n";
-                    llvm::outs() << "constPhi: " << *constVal << "\n";
-                }
-                assert(domTree.dominates(constVal, phiNode));
-                ASSERT_ELSE_UNKOWN(current != constVal, current);
-                current = constVal;
-            } else if (auto loopBoundPHIBase = findLoopBoundPHIBase(phiNode, SCEV)) {
+            ASSERT_ELSE_UNKOWN(!phiNode->hasConstantValue(), phiNode); // or strip_pointer_casts wouldve caught it
+            if (auto loopBoundPHIBase = findLoopBoundPHIBase(phiNode, SCEV)) {
                 ASSERT_ELSE_UNKOWN(current != loopBoundPHIBase, current);
                 current = loopBoundPHIBase;
+                offseted = true; // assume some loop-bound phi is always offseted
             } else { // fallback case
                 // as a last-ditch effort, we check if all incomingvalues happen to have the same commonbase
                 //  if so, we can continue through it with the commonbase
@@ -100,7 +78,7 @@ llvm::Value* PointerDetector::find_real_base(llvm::Value *arithmetic) const {
                 //  all recursive incoming values may be ignored, they cyclically depend on this phiNode -> they are not the base
                 llvm::Value* commonBase = nullptr;
                 auto firstIt = llvm::find_if(phiNode->incoming_values(), [&] (llvm::Value* val) -> bool {
-                    auto base = find_real_base(val);
+                    auto [base, baseOffseted] = find_real_base(val);
                     if (base != phiNode) {
                         commonBase = base;
                         return true;
@@ -113,12 +91,14 @@ llvm::Value* PointerDetector::find_real_base(llvm::Value *arithmetic) const {
                 assert(commonBase); // no way it's null here
 
                 // continue with the rest of the incoming values and check whether they have the same commonbase
+                bool commonBaseOffseted = offseted;
                 for (auto it = firstIt + 1; it != phiNode->incoming_values().end(); it++) {
-                    auto base = find_real_base(*it);
+                    auto [base, baseOffseted] = find_real_base(*it);
+                    commonBaseOffseted = baseOffseted ?: commonBaseOffseted;
                     if (base != commonBase) {
                         // not recursive but also not the same as what we found already
                         done = true;
-                        pointerToRealBase[current] = current; // was a tough one to compute
+                        pointerToRealBase[current] = {current, false}; // was a tough one to compute
                         break;
                     }
                 }
@@ -126,22 +106,24 @@ llvm::Value* PointerDetector::find_real_base(llvm::Value *arithmetic) const {
                 if (!done) {
                     ASSERT_ELSE_UNKOWN(current != commonBase, current);
                     current = commonBase;
+                    offseted = commonBaseOffseted;
                 }
             }
         } else if (auto selectInst = llvm::dyn_cast<llvm::SelectInst>(current)) {
-            auto baseIfTrue = find_real_base(selectInst->getTrueValue());
-            auto baseIfFalse = find_real_base(selectInst->getFalseValue());
+            auto [baseIfTrue, ifTrueOffseted] = find_real_base(selectInst->getTrueValue());
+            auto [baseIfFalse, ifFalseOffseted] = find_real_base(selectInst->getFalseValue());
 
             ASSERT_ELSE_UNKOWN(baseIfTrue != selectInst && baseIfFalse != selectInst, selectInst);
 
             if (baseIfTrue == baseIfFalse) {
                 ASSERT_ELSE_UNKOWN(current != baseIfTrue, current);
                 current = baseIfTrue;
-                pointerToRealBase[current] = baseIfTrue;
+                pointerToRealBase[current] = {baseIfTrue, ifTrueOffseted || ifFalseOffseted};
+                offseted = offseted || ifTrueOffseted || ifFalseOffseted;
             } else {
                 // we gotta stop, we can't find a common base
                 done = true;
-                pointerToRealBase[current] = current;
+                pointerToRealBase[current] = {current, false};
             }
         } else if (isNonWrapperAllocSite(current) 
                     || llvm::isa<llvm::ConstantPointerNull, llvm::UndefValue, llvm::LoadInst, llvm::ExtractValueInst,
@@ -150,10 +132,6 @@ llvm::Value* PointerDetector::find_real_base(llvm::Value *arithmetic) const {
             done = true;
         } else if (auto constantInt = llvm::dyn_cast<llvm::ConstantInt>(current)) {
             done = true;
-        } else if (auto freeze = llvm::dyn_cast<llvm::FreezeInst>(current)) {
-            // if the below fires, i think we can assume it's a safe pointer
-            ASSERT_ELSE_UNKOWN(!(llvm::isa<llvm::UndefValue, llvm::PoisonValue>(freeze->getOperand(0))), current);
-            current = freeze->getOperand(0);
         } else if (auto constExpr = llvm::dyn_cast<llvm::ConstantExpr>(current)) {
             switch (constExpr->getOpcode()) {
                 case llvm::Instruction::IntToPtr:
@@ -176,15 +154,13 @@ llvm::Value* PointerDetector::find_real_base(llvm::Value *arithmetic) const {
 
     assert(done);
 
-    return current;
+    return {current, offseted};
 }
 
 llvm::Value* PointerDetector::strip_pointer_casts(llvm::Value *pointer) const {
     const auto& dataLayout = module.getDataLayout();
 
     while (true) {
-        // ASSERT_ELSE_UNKOWN(is_confirmed_pointer(pointer), pointer);
-
         if (auto gep = llvm::dyn_cast<llvm::GEPOperator>(pointer)) {
             auto operand = gep->getPointerOperand();
             auto offset = findConstantOffset(gep);
@@ -200,6 +176,12 @@ llvm::Value* PointerDetector::strip_pointer_casts(llvm::Value *pointer) const {
             } else break;
         } else if (auto castInst = llvm::dyn_cast<llvm::CastInst>(pointer)) {
             switch (castInst->getOpcode()) {
+                case llvm::Instruction::FPToSI: // fuck this
+                case llvm::Instruction::FPToUI:
+                case llvm::Instruction::SExt:
+                case llvm::Instruction::ZExt:
+                    ASSERT_ELSE_UNKOWN(dataLayout.getTypeSizeInBits(castInst->getType()) == 64, castInst);
+                    return pointer;
                 case llvm::Instruction::CastOps::IntToPtr:
                 case llvm::Instruction::CastOps::PtrToInt:
                     assert(castInst->isNoopCast(dataLayout));
@@ -207,17 +189,24 @@ llvm::Value* PointerDetector::strip_pointer_casts(llvm::Value *pointer) const {
                 case llvm::Instruction::CastOps::BitCast: {
                     pointer = castInst->getOperand(0);
                 } break;
-                default:
-                    HANDLE_UNKOWN_VALUE(pointer);
+                default: {
+                    HANDLE_UNKOWN_VALUE(castInst);
+                }
             }
         } else if (auto bitcastOp = llvm::dyn_cast<llvm::BitCastOperator>(pointer)) {
             pointer = bitcastOp->getOperand(0);
         } else if (auto freeze = llvm::dyn_cast<llvm::FreezeInst>(pointer)) {
-            assert((!llvm::isa<llvm::UndefValue, llvm::PoisonValue>(freeze->getOperand(0))));
+            // if the below fires, i think we can assume it's a safe pointer
+            ASSERT_ELSE_UNKOWN(!(llvm::isa<llvm::UndefValue, llvm::PoisonValue>(freeze->getOperand(0))), pointer);
             pointer = freeze->getOperand(0);
+        } else if (auto phi = llvm::dyn_cast<llvm::PHINode>(pointer)) {
+            if (auto constVal = phi->hasConstantValue()) {
+                ASSERT_ELSE_UNKOWN(pointer != constVal, pointer);
+                pointer = constVal;
+            } else break;
         } else if (llvm::isa<llvm::AllocaInst, llvm::GlobalVariable, llvm::ConstantPointerNull, llvm::ConstantInt, 
                                 llvm::Function, llvm::LoadInst, llvm::ExtractElementInst, llvm::ExtractValueInst, llvm::Argument, 
-                                llvm::CallBase, llvm::PHINode, llvm::SelectInst>(pointer)
+                                llvm::CallBase, llvm::SelectInst, llvm::UndefValue>(pointer)
         ) {
             break;
         } else if (auto constExpr = llvm::dyn_cast<llvm::ConstantExpr>(pointer)) {
