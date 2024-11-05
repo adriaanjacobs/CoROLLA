@@ -41,7 +41,7 @@ std::pair<llvm::Value*, bool> PointerDetector::find_real_base(llvm::Value *arith
         auto oldCurrent = current;
         passedInstrs.push_back(current);
 
-        if (auto it = pointerToRealBase.find(arithmetic); it != pointerToRealBase.end()) {
+        if (auto it = pointerToRealBase.find(current); it != pointerToRealBase.end()) {
             auto [cachedBase, cachedBaseOffseted] = it->getSecond();
             return {cachedBase, cachedBaseOffseted || offseted};
         }
