@@ -117,8 +117,8 @@ std::pair<llvm::Value*, bool> PointerDetector::find_real_base(llvm::Value *arith
 
             if (baseIfTrue == baseIfFalse) {
                 ASSERT_ELSE_UNKOWN(current != baseIfTrue, current);
-                current = baseIfTrue;
                 pointerToRealBase[current] = {baseIfTrue, ifTrueOffseted || ifFalseOffseted};
+                current = baseIfTrue;
                 offseted = offseted || ifTrueOffseted || ifFalseOffseted;
             } else {
                 // we gotta stop, we can't find a common base
