@@ -69,8 +69,12 @@ private:
     template<typename T>
     std::optional<llvm::Value*> mark_binaryOp_origins(T* binaryOp, llvm::SmallVector<std::pair<llvm::Value *, ValueType>>& toMark);
     void mark_pointer_uses(llvm::Value* pointer);
+    void mark_castOp_use(llvm::Value* castOp);
+    template<typename T>
+    void mark_binaryOp_use(T* binaryOp);
     void mark_actual_vs_formal_args(llvm::Module& module);
     void mark_value(llvm::Value*, ValueType status);
+    bool postDominates(llvm::Instruction* evidenceOfPointerUse, llvm::Value* pointer);
 };
 
 class PointerDetectionAnalysis : public llvm::AnalysisInfoMixin<PointerDetectionAnalysis> {

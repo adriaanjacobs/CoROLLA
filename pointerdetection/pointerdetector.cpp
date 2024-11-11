@@ -19,6 +19,25 @@
 
 llvm::AnalysisKey PointerDetectionAnalysis::Key;
 
+bool PointerDetector::postDominates(llvm::Instruction* evidenceOfPointerUse, llvm::Value* pointer) {
+    if (!llvm::isa<llvm::Argument, llvm::Instruction>(pointer)) {
+        // there is no way to know that the evidence in a particular function will execute and prove that pointer is a pointer
+        return false;
+    }
+    auto& postDomTree = getFAM(module, MAM).getResult<llvm::PostDominatorTreeAnalysis>(*evidenceOfPointerUse->getFunction());
+    auto evidenceNode = postDomTree.getNode(evidenceOfPointerUse->getParent());
+    auto pointerNode = postDomTree.getNode(
+        llvm::isa<llvm::Instruction>(pointer) 
+        ? llvm::cast<llvm::Instruction>(pointer)->getParent() 
+        : &llvm::cast<llvm::Argument>(pointer)->getParent()->getEntryBlock() // must be an argument
+    );
+    bool postDominates = postDomTree.dominates(evidenceNode, pointerNode);
+    if (!postDominates)
+        assert(evidenceNode != pointerNode); // if they're in the same block i expect them to be ordered correctly (given their dataflow relationship)
+
+    return postDominates;
+}
+
 void PointerDetector::identify_start_pointers(llvm::Module& module) {
     // Initialize with all known pointers
     auto& dataLayout = module.getDataLayout();
@@ -33,26 +52,40 @@ void PointerDetector::identify_start_pointers(llvm::Module& module) {
                 if (isNonWrapperAllocSite(&inst))
                     mark_value(&inst, POINTER);
 
-                if (inst.mayReadOrWriteMemory()) {
-                    auto pointerOperand = llvm::getLoadStorePointerOperand(&inst);
-                    if (pointerOperand) {
-                        assert(pointerOperand->getType()->isPointerTy());
-                        if (!sillyPerls.contains(&inst))
-                            mark_value(pointerOperand, POINTER);
-                    } else if (auto cmpxchgInst = llvm::dyn_cast<llvm::AtomicCmpXchgInst>(&inst)) {
-                        mark_value(cmpxchgInst->getPointerOperand(), POINTER);
-                    } else if (auto atomicrmwInst = llvm::dyn_cast<llvm::AtomicRMWInst>(&inst)) {
-                        mark_value(atomicrmwInst->getPointerOperand(), POINTER);
-                    } else if (auto callInst = llvm::dyn_cast<llvm::CallBase>(&inst)) {
-                        for (uint i = 0; i < callInst->arg_size(); i++) {
-                            if (callInst->paramHasAttr(i, llvm::Attribute::Dereferenceable)) {
-                                mark_value(callInst->getArgOperand(i), POINTER);
-                            }
+                if (auto callInst = llvm::dyn_cast<llvm::CallBase>(&inst)) {
+                    for (uint i = 0; i < callInst->arg_size(); i++) {
+                        if (callInst->paramHasAttr(i, llvm::Attribute::Dereferenceable)) {
+                            mark_value(callInst->getArgOperand(i), POINTER);
                         }
-                    } else if (llvm::isa<llvm::FenceInst>(&inst)) {
-                        // ignore, the actual memory accesses have already been put into the pipeline here
-                    } else {
-                        HANDLE_UNKOWN_VALUE(&inst);
+                    }
+                }
+                
+                auto pointerOperand = [&] () -> llvm::Value* {
+                    if (inst.mayReadOrWriteMemory()) {
+                        auto pointerOperand = llvm::getLoadStorePointerOperand(&inst);
+                        if (pointerOperand) {
+                            assert(pointerOperand->getType()->isPointerTy());
+                            if (!sillyPerls.contains(&inst))
+                                return pointerOperand;
+                        } else if (auto cmpxchgInst = llvm::dyn_cast<llvm::AtomicCmpXchgInst>(&inst)) {
+                            return cmpxchgInst->getPointerOperand();
+                        } else if (auto atomicrmwInst = llvm::dyn_cast<llvm::AtomicRMWInst>(&inst)) {
+                            return atomicrmwInst->getPointerOperand();
+                        } else if (llvm::isa<llvm::FenceInst, llvm::CallBase>(&inst)) {
+                            // ignore, the actual memory accesses have already been put into the pipeline here
+                            //  callinst has already been handled
+                        } else {
+                            HANDLE_UNKOWN_VALUE(&inst);
+                        }
+                    }
+                    return nullptr;
+                } ();
+
+                if (pointerOperand) {
+                    // only mark the pointerOperand definition as a pointer if it is post-dominated by the memory access that makes it so
+                    //  otherwise, it could well be a nullptr or some other non-pointer value that isnt actually dereferenced
+                    if (postDominates(&inst, pointerOperand)) {
+                        mark_value(pointerOperand, POINTER);
                     }
                 }
             }
@@ -215,13 +248,19 @@ PointerDetector::PointerDetector(llvm::Module& module, llvm::ModuleAnalysisManag
     for (auto ptr : pointers)
         ASSERT_ELSE_UNKOWN(module.getDataLayout().getTypeSizeInBits(ptr->getType()) == 64, ptr);
 
-    // for (auto ptr : pointers) {
-    //     if (auto gepInst = llvm::dyn_cast<llvm::GetElementPtrInst>(ptr)) {
-    //         assert(is_confirmed_pointer(gepInst->getPointerOperand()));
-    //     } else if (auto gepOperator = llvm::dyn_cast<llvm::GEPOperator>(ptr)) {
-    //         assert(is_confirmed_pointer(gepOperator->getPointerOperand()));
-    //     }
-    // }
+    { // some statistics about how many geps we consider true pointer arithmetic
+        size_t numGEPs = 0;
+        size_t numTrueGEPs = 0;
+        for (auto& func : module)
+            for (auto& bb : func)
+                for (auto& inst : bb)
+                    if (auto gepInst = llvm::dyn_cast<llvm::GetElementPtrInst>(&inst)) {
+                        numGEPs++;
+                        numTrueGEPs += is_confirmed_pointer(gepInst);
+                    }
+
+        llvm::errs() << "We detect " << numTrueGEPs << "/" << numGEPs << " (" << (100.0f*numTrueGEPs/numGEPs) << "%) of GEPs as real pointer arithmetic.\n";
+    }
     
     llvm::outs() << pointers.size() << " pointers identified.\n";
 }
@@ -246,39 +285,108 @@ void PointerDetector::mark_value(llvm::Value* val, ValueType status) {
     }
 }
 
-// I think we look through pointer casts here, but it's not a problem since we're marking them during
-// mark_pointer_origins later I think.
+template<typename T>
+void PointerDetector::mark_binaryOp_use(T* binaryOp) {
+    auto pointerStatus = handle_unconfirmed_binaryOp(binaryOp);
+    if (pointerStatus.has_value() && pointerStatus.value() == POINTER) {
+        if (binaryOp->getOpcode() == llvm::Instruction::Mul && llvm::isa<llvm::ConstantInt>(binaryOp->getOperand(1)))
+            HANDLE_UNKOWN_VALUE(binaryOp);
+        mark_value(binaryOp, POINTER);
+    }
+}
+
+void PointerDetector::mark_castOp_use(llvm::Value* castOp) {
+    if (auto constExpr = llvm::dyn_cast<llvm::ConstantExpr>(castOp))
+        ASSERT_ELSE_UNKOWN(constExpr->isCast(), castOp);
+    else ASSERT_ELSE_UNKOWN(llvm::isa<llvm::CastInst>(castOp), castOp);
+
+    auto& dataLayout = module.getDataLayout();
+    auto destTy = castOp->getType();
+    if (destTy->isPointerTy() || destTy->isIntegerTy(64))
+        mark_value(castOp, POINTER);
+    // otherwise we're doing weird things
+    ASSERT_ELSE_UNKOWN(dataLayout.getTypeSizeInBits(destTy) <= 64, castOp); // who's casting things to i128??
+}
+
+// mark the places where confirmed pointers flow to
+//  all of these have their value determined by a confirmed pointer
+//  -> they should be confirmed pointers too!
 void PointerDetector::mark_pointer_uses(llvm::Value* pointer) {
+    ASSERT_ELSE_UNKOWN(is_confirmed_pointer(pointer), pointer);
     for (auto& use : pointer->uses()) {
         auto const user = use.getUser();
-        if (is_confirmed_pointer(user))
-            continue;
 
-        if (llvm::isa<llvm::StoreInst>(user) 
+        if (llvm::isa<llvm::StoreInst, llvm::LoadInst>(user) 
             || llvm::isa<llvm::ICmpInst>(user) 
             || llvm::isa<llvm::AtomicCmpXchgInst>(user) 
             || llvm::isa<llvm::AtomicRMWInst>(user)
-            // || llvm::isa<llvm::GlobalVariable>(user)
             || llvm::isa<llvm::ConstantAggregate>(user)
-            || llvm::isa<llvm::ReturnInst>(user)
+            || llvm::isa<llvm::ReturnInst>(user) // further handled by actual <-> formal arg taint
+            || llvm::isa<llvm::InsertElementInst, llvm::InsertValueInst>(user)
+            || llvm::isa<llvm::LandingPadInst>(user) // as far as i can tell, for C++, this value is never really used anywhere
         ) {
 
+        } else if (llvm::isa<llvm::GlobalVariable>(user)) {
+            ASSERT_ELSE_UNKOWN(is_confirmed_pointer(user), user);
         } else if (auto switchInst = llvm::dyn_cast<llvm::SwitchInst>(user)) {
-            assert(switchInst->getCondition() == use.get());
+            // operand 0 is condition
+            ASSERT_ELSE_UNKOWN(switchInst->getOperandUse(0) == use, user);
+            // this is a super weird case but perlbench of course triggers it.
+            //  it _should_ signal that the pointer _could_ be an integer
+            //  but it could also be some leftover code that doesnt do nothing
         } else if (auto callInst = llvm::dyn_cast<llvm::CallBase>(user)) {
-            auto argOperand = use.get();
-            assert(pointer == argOperand);
-        } else {
-            auto userStatus = is_unconfirmed_pointer(user);
-            if (userStatus.has_value()) {
-                if (userStatus == POINTER) {
-                    if (user->getType()->isVectorTy())
-                        continue; // this is horrible but i just want to compile SPEC at this point
-                    ASSERT_ELSE_UNKOWN(module.getDataLayout().getTypeSizeInBits(user->getType()) == 64, user);
-                }
-                mark_value(user, userStatus.value());
+            ASSERT_ELSE_UNKOWN(callInst->getCalledOperandUse() != use, user);
+            // further handled by actual <-> formal arg taint
+        } else if (auto binaryOp = llvm::dyn_cast<llvm::BinaryOperator>(user)) {
+            auto pointerStatus = handle_unconfirmed_binaryOp(binaryOp);
+            if (pointerStatus.has_value() && pointerStatus.value() == POINTER) {
+                if (binaryOp->getOpcode() == llvm::Instruction::Mul && llvm::isa<llvm::ConstantInt>(binaryOp->getOperand(1)))
+                    HANDLE_UNKOWN_VALUE(binaryOp);
+                mark_value(binaryOp, POINTER);
             }
-        }
+        } else if (llvm::isa<llvm::FreezeInst>(user)) {
+            mark_value(user, POINTER);
+        } else if (auto gep = llvm::dyn_cast<llvm::GEPOperator>(user)) {
+            if (use == gep->getOperandUse(gep->getPointerOperandIndex())) {
+                if (gep->getType()->isPointerTy())
+                    mark_value(user, POINTER);
+                // else result of gep can be vectortype
+                // ignore
+            } else {
+                // ive never seen this outside of nginx, never with more than 1 idx
+                ASSERT_ELSE_UNKOWN(gep->getNumIndices() == 1, gep);
+                // somehow another pointer being used as the index in the gep?
+                //  is the pointeroperand an index or something?
+                auto pointerOperandStatus = is_unconfirmed_pointer(gep->getPointerOperand());
+                if (pointerOperandStatus.has_value()) {
+                    if (*pointerOperandStatus == POINTER)
+                        HANDLE_UNKOWN_VALUE(gep);
+                    else if (*pointerOperandStatus == INTEGER)
+                        mark_value(gep, POINTER); // risky click
+                    else
+                        ASSERT_ELSE_UNKOWN(*pointerOperandStatus == NEGATED_POINTER, gep);
+                } // else we cannot do anything
+            }
+        } else if (auto phi = llvm::dyn_cast<llvm::PHINode>(user)) {
+            auto match =  llvm::all_of(phi->incoming_values(), [&] (llvm::Value* incomingVal) -> bool {
+                return is_confirmed_pointer(incomingVal);
+            });
+            if (match)
+                mark_value(phi, POINTER);
+        } else if (auto select = llvm::dyn_cast<llvm::SelectInst>(user)) {
+            if (is_confirmed_pointer(select->getTrueValue()) && is_confirmed_pointer(select->getFalseValue()))
+                mark_value(select, POINTER);
+        } else if (auto castInst = llvm::dyn_cast<llvm::CastInst>(user)) {
+            mark_castOp_use(castInst);
+        } else if (auto constExpr = llvm::dyn_cast<llvm::ConstantExpr>(user)) {
+            // apparently binaryOp constexprs are not binaryops, who wouldve thought
+            if (constExpr->isCast())
+                mark_castOp_use(constExpr);
+            else if (constExpr->isCompare()) // we can ignore icmps
+                ASSERT_ELSE_UNKOWN(constExpr->isCompare(), constExpr);
+            else
+                mark_binaryOp_use(constExpr);
+        } else HANDLE_UNKOWN_VALUE(user);
     }
 }
 
@@ -382,16 +490,27 @@ void PointerDetector::mark_pointer_origins(llvm::Value* pointer) {
         ASSERT_ELSE_UNKOWN(done || oldCurrent != current, current);
 
         assert(!llvm::isa<llvm::Argument>(oldCurrent));
-        if (auto func = functionOf(oldCurrent)) {
-            auto oldInst = llvm::cast<llvm::Instruction>(oldCurrent);
-            auto& postDomTree = FAM.getResult<llvm::PostDominatorTreeAnalysis>(*func);
-            auto oldNode = postDomTree.getNode(oldInst->getParent());
-            auto curNode = postDomTree.getNode(llvm::isa<llvm::Instruction>(current) ? llvm::cast<llvm::Instruction>(current)->getParent() : &func->getEntryBlock());
-            if (postDomTree.dominates(oldNode, curNode)) {
-                for (auto mark : toMark)
-                    mark_value(mark.first, mark.second);
-            } else done = true;
-        }
+
+        bool shouldMark = [&] () -> bool {
+            auto oldInst = llvm::dyn_cast<llvm::Instruction>(oldCurrent);
+            if (!oldInst) {
+                // oldCurrent is some global value (it's not an arg)
+                // oldCurrent is directly data-flow dependent on current
+                //  current can't be an instruction. This is something like oldCurrent = bitcast @current
+                // given that oldCurrent is guaranteed to be a pointer (always dereferenced), 
+                // current _has_ to be a pointer too, no??
+                // i guess this might never happen
+                return true;
+            } else if (postDominates(oldInst, current)) 
+                return true;
+
+            return false;
+        } ();
+
+        if (shouldMark) {
+            for (auto mark : toMark)
+                mark_value(mark.first, mark.second);
+        } else done = true;
     }
 
     assert(done);
@@ -700,6 +819,8 @@ std::optional<PointerDetector::ValueType> PointerDetector::handle_unconfirmed_bi
                 // either way, the result is an integer
                 if (rh->getValue().abs() != 1)
                     return INTEGER;
+                if (rh->getValue() == -1)
+                    return static_cast<ValueType>(-1 * static_cast<int>(lhs.value()));
                 return lhs;
             } else if (rhs == POINTER || rhs == NEGATED_POINTER) {
                 ASSERT_ELSE_UNKOWN(lhs == INTEGER, binaryOp);
@@ -858,18 +979,6 @@ std::optional<PointerDetector::ValueType> PointerDetector::is_unconfirmed_pointe
         } else if (llvm::isa<llvm::Function>(current)) {
             return POINTER;
         } else HANDLE_UNKOWN_VALUE(current);
-
-        // assert(oldCurrent != current);
-        // assert(!llvm::isa<llvm::Argument>(oldCurrent));
-        // auto func = functionOf(oldCurrent);
-        // if (func) {
-        //     auto oldInst = llvm::cast<llvm::Instruction>(oldCurrent);
-        //     auto& postDomTree = FAM.getResult<llvm::PostDominatorTreeAnalysis>(*func);
-        //     auto oldNode = postDomTree.getNode(oldInst->getParent());
-        //     auto curNode = postDomTree.getNode(llvm::isa<llvm::Instruction>(current) ? llvm::cast<llvm::Instruction>(current)->getParent() : &func->getEntryBlock());
-        //     if (!postDomTree.dominates(oldNode, curNode))
-        //         return std::nullopt;
-        // }
     }
     assert(is_confirmed_pointer(current));
     return POINTER;
