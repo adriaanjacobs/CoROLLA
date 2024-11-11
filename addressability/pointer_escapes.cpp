@@ -62,7 +62,7 @@ void collectIntraProceduralPtrEscapes(llvm::Value* ptr, llvm::DenseSet<llvm::Use
             if (!llvm::is_contained(passedInstrs, ptr))
                 collectIntraProceduralPtrEscapes(phi, ptrEscapes, pointerInfo);
             // else we've already seen it, no more escapes to collect
-        } else if (llvm::isa<llvm::SelectInst>(user)) {
+        } else if (llvm::isa<llvm::SelectInst, llvm::FreezeInst>(user)) {
             collectIntraProceduralPtrEscapes(user, ptrEscapes, pointerInfo);
         } else if (auto cast = llvm::dyn_cast<llvm::CastInst>(user)) {
             if (cast->getDestTy()->isPointerTy() || cast->getDestTy()->isIntegerTy(64))
@@ -71,14 +71,58 @@ void collectIntraProceduralPtrEscapes(llvm::Value* ptr, llvm::DenseSet<llvm::Use
             if (bitcastOp->getDestTy()->isPointerTy() || bitcastOp->getDestTy()->isIntegerTy(64))
                 collectIntraProceduralPtrEscapes(bitcastOp, ptrEscapes, pointerInfo);
         } else if (auto gep = llvm::dyn_cast<llvm::GEPOperator>(user)) {
-            ASSERT_ELSE_UNKOWN(gep->getOperandUse(gep->getPointerOperandIndex()) == ptrUse, gep);
-            collectIntraProceduralPtrEscapes(gep, ptrEscapes, pointerInfo);
+            if (gep->getOperandUse(gep->getPointerOperandIndex())) {
+                if (gep->getType()->isPointerTy())
+                    collectIntraProceduralPtrEscapes(gep, ptrEscapes, pointerInfo);
+                else // SPEC06 mcf triggers this: a gep with vector indices gives a vector of pointers
+                    ptrEscapes.insert(&ptrUse);
+            } else {
+                // ive never seen this outside of nginx, never with more than 1 idx
+                ASSERT_ELSE_UNKOWN(gep->getNumIndices() == 1, gep);
+                // somehow another pointer being used as the index in the gep?
+                //  is the pointeroperand an index or something?
+                auto pointerOperandStatus = pointerInfo.is_unconfirmed_pointer(gep->getPointerOperand());
+                using enum PointerDetector::ValueType;
+                if (pointerOperandStatus.has_value()) {
+                    if (*pointerOperandStatus == POINTER)
+                        HANDLE_UNKOWN_VALUE(gep); // ptr + ptr ???
+                    else if (*pointerOperandStatus == INTEGER)
+                        // follow the user here! inverted gep
+                        collectIntraProceduralPtrEscapes(gep, ptrEscapes, pointerInfo);
+                    else
+                        ASSERT_ELSE_UNKOWN(*pointerOperandStatus == NEGATED_POINTER, gep);
+                } else {
+                    // totally unclear going into the gep here. might create a relative pointer
+                    // this is an escape site
+                    ptrEscapes.insert(&ptrUse);
+                }
+            }            
         } else if (llvm::isa<llvm::LoadInst>(user)) {
             // ignore
+        } else if (auto atomicRMW = llvm::dyn_cast<llvm::AtomicRMWInst>(user)) {
+            ASSERT_ELSE_UNKOWN(atomicRMW->getOperandUse(atomicRMW->getPointerOperandIndex()) == ptrUse, user);
+            // just like a load, ignore
+        } else if (auto cmpxchg = llvm::dyn_cast<llvm::AtomicCmpXchgInst>(user)) {
+            if (cmpxchg->getOperandUse(cmpxchg->getPointerOperandIndex()) == ptrUse) {
+                // just like a load, ignore
+            } else if (cmpxchg->getOperandUse(2) == ptrUse) { // operand(2) == newvaloperand
+                // this is a store
+                ptrEscapes.insert(&ptrUse);
+            } else { // a pointer as the comparison value?? treat like icmp
+                ASSERT_ELSE_UNKOWN(cmpxchg->getOperandUse(1) == ptrUse, cmpxchg);
+                // ignore like icmp
+            }
+        } else if (auto switchInst = llvm::dyn_cast<llvm::SwitchInst>(user)) {
+            // operand 0 is the condition
+            ASSERT_ELSE_UNKOWN(switchInst->getOperandUse(0) == ptrUse, user);
+            // ignore. i refuse to buy into perlbench's bullshit that compile-time constant labels could somehow be valid pointer values
+        } else if (auto landingPad = llvm::dyn_cast<llvm::LandingPadInst>(user)) {
+            ASSERT_ELSE_UNKOWN(llvm::isa<llvm::Constant>(ptrUse.get()), ptrUse.get());
+            // the value doesnt propagate anywhere. ignore
         } else if (auto constExpr = llvm::dyn_cast<llvm::ConstantExpr>(user)) {
             // too much to handle. Handle it like an instruction
             auto inst = constExpr->getAsInstruction();
-            // this is very fucking weird since 
+            // this is very fucking weird but it works
             constExpr->replaceAllUsesWith(inst);
             collectIntraProceduralPtrEscapes(inst, ptrEscapes, pointerInfo);
             inst->replaceAllUsesWith(constExpr);
