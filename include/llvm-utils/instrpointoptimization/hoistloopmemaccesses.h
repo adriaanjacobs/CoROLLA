@@ -3,6 +3,9 @@
 #include <llvm/IR/PassManager.h>
 #include <llvm/IR/Module.h>
 #include <llvm/Analysis/ScalarEvolution.h>
+#include <llvm/Transforms/Utils/ScalarEvolutionExpander.h>
+
+#include <map>
 
 struct InstrumentationPoint {
     llvm::Instruction* insertBefore;
@@ -13,8 +16,22 @@ struct InstrumentationPoint {
     {}
 };
 
+class LoopHoister {
+    llvm::Module& module;
+    llvm::ModuleAnalysisManager& MAM;
 
-// Maximally hoist logs in loops into preheaders
-void hoistLoopBoundMemAccesses(llvm::Module&, llvm::ModuleAnalysisManager&, llvm::DenseMap<llvm::Function*, llvm::DenseMap<llvm::Instruction*, llvm::DenseSet<InstrumentationPoint*>>>& funcToInstPoints);
-llvm::Value* tryExpandSCEV(llvm::Module&, llvm::ModuleAnalysisManager&, const llvm::SCEV* scev, llvm::Type* expandedTy, llvm::Instruction* insertBefore);
+    // map because DenseMap moves on try_emplace and SCEVExpander can't handle that
+    std::map<llvm::Function*, llvm::SCEVExpander> scevExpanders;
+    llvm::SCEVExpander& getOrCreateSCEVExpander(llvm::Function* func, llvm::ScalarEvolution& SCEV);
+
+    llvm::Value* tryExpandSCEV(const llvm::SCEV* scev, llvm::Type* expandedTy, llvm::Instruction* insertBefore);
+
+public:
+    LoopHoister(llvm::Module& M, llvm::ModuleAnalysisManager& MAM);
+
+    // Maximally hoist logs in loops into preheaders
+    void hoistLoopBoundMemAccesses(llvm::DenseMap<llvm::Function*, llvm::DenseMap<llvm::Instruction*, llvm::DenseSet<InstrumentationPoint*>>>& funcToInstPoints);
+};
+
+
 

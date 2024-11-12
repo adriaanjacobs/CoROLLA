@@ -7,16 +7,21 @@
 #include <llvm/Transforms/Utils/ScalarEvolutionExpander.h>
 #include <llvm/IR/Verifier.h>
 
+llvm::SCEVExpander& LoopHoister::getOrCreateSCEVExpander(llvm::Function* func, llvm::ScalarEvolution& SCEV) {
+    auto& dataLayout = func->getParent()->getDataLayout();
+    auto [expanderIt, inserted] = scevExpanders.try_emplace(func, SCEV, dataLayout, "expanded");
+    return expanderIt->second;
+}
 
-llvm::Value* tryExpandSCEV(llvm::Module& module, llvm::ModuleAnalysisManager& MAM, const llvm::SCEV* scevVal, llvm::Type* expandedTy, llvm::Instruction* insertBefore) {
+llvm::Value* LoopHoister::tryExpandSCEV(const llvm::SCEV* scevVal, llvm::Type* expandedTy, llvm::Instruction* insertBefore) {
     assert(!llvm::isa<llvm::SCEVCouldNotCompute>(scevVal));
     if (auto scevUnkown = llvm::dyn_cast<llvm::SCEVUnknown>(scevVal))
         return scevUnkown->getValue();
     auto& domTree = getFAM(module, MAM).getResult<llvm::DominatorTreeAnalysis>(*insertBefore->getFunction());
-    auto& scev = getFAM(module, MAM).getResult<llvm::ScalarEvolutionAnalysis>(*insertBefore->getFunction());
+    auto& SCEV = getFAM(module, MAM).getResult<llvm::ScalarEvolutionAnalysis>(*insertBefore->getFunction());
     if (llvm::isa<llvm::SCEVAddExpr, llvm::SCEVAddRecExpr, llvm::SCEVUMinExpr, llvm::SCEVUMaxExpr>(scevVal)) {
         // that's okay
-        llvm::SCEVExpander expander{scev, module.getDataLayout(), "MySCEVExpander"};
+        auto& expander = getOrCreateSCEVExpander(insertBefore->getFunction(), SCEV);
         auto value = expander.expandCodeFor(scevVal, expandedTy, insertBefore);
 
         auto isns = expander.getAllInsertedInstructions();
@@ -43,7 +48,7 @@ llvm::Value* tryExpandSCEV(llvm::Module& module, llvm::ModuleAnalysisManager& MA
     } else HANDLE_UNKOWN_SCEV(scevVal);
 }
 
-void hoistLoopBoundMemAccesses(llvm::Module& module, llvm::ModuleAnalysisManager& MAM, llvm::DenseMap<llvm::Function*, llvm::DenseMap<llvm::Instruction*, llvm::DenseSet<InstrumentationPoint*>>>& funcToInstPoints) {
+void LoopHoister::hoistLoopBoundMemAccesses(llvm::DenseMap<llvm::Function*, llvm::DenseMap<llvm::Instruction*, llvm::DenseSet<InstrumentationPoint*>>>& funcToInstPoints) {
     auto& context = module.getContext();
 
     size_t pointsInLoops = 0;
@@ -223,12 +228,12 @@ void hoistLoopBoundMemAccesses(llvm::Module& module, llvm::ModuleAnalysisManager
                             change = true;
                         } else noMustExecuteLoopInvariant += !i;
                     } else {
-                        auto& scev = FAM.getResult<llvm::ScalarEvolutionAnalysis>(*func);
-                        auto operandScev = scev.getSCEVAtScope(point->pointerOperand, loop);
+                        auto& SCEV = FAM.getResult<llvm::ScalarEvolutionAnalysis>(*func);
+                        auto operandScev = SCEV.getSCEVAtScope(point->pointerOperand, loop);
                         if (auto addrec = llvm::dyn_cast<llvm::SCEVAddRecExpr>(operandScev)) {
                             operandDependsOnIV += !i;
                             // figure out the trip count & evaluate the addrec at that iteration
-                            auto backEdgeTakenScev = scev.getBackedgeTakenCount(loop);
+                            auto backEdgeTakenScev = SCEV.getBackedgeTakenCount(loop);
                             if (llvm::isa<llvm::SCEVCouldNotCompute>(backEdgeTakenScev)) {
                                 cantComputeBackEdgeCount += !i;
                                 // pointer depends on IV but the loop's end condition does not. 
@@ -238,21 +243,21 @@ void hoistLoopBoundMemAccesses(llvm::Module& module, llvm::ModuleAnalysisManager
                                 if (hoistable) {
                                     // inspired by LLVM's RuntimePointerChecking::insert()
                                     auto lowerScev = addrec->getStart();
-                                    auto upperScev = addrec->evaluateAtIteration(backEdgeTakenScev, scev);
+                                    auto upperScev = addrec->evaluateAtIteration(backEdgeTakenScev, SCEV);
 
                                     // For expressions with negative step, the bounds are swapped
                                     // if the step size is constant, it's simple
-                                    if (auto constStepScev = llvm::dyn_cast<llvm::SCEVConstant>(addrec->getStepRecurrence(scev))) {
+                                    if (auto constStepScev = llvm::dyn_cast<llvm::SCEVConstant>(addrec->getStepRecurrence(SCEV))) {
                                         if (constStepScev->getValue()->isNegative())
                                             std::swap(lowerScev, upperScev);
                                     } else { // non-constant step: use umin/umax to swap them around appropriately
-                                        lowerScev = scev.getUMinExpr(lowerScev, upperScev);
-                                        upperScev = scev.getUMaxExpr(addrec->getStart(), upperScev);
+                                        lowerScev = SCEV.getUMinExpr(lowerScev, upperScev);
+                                        upperScev = SCEV.getUMaxExpr(addrec->getStart(), upperScev);
                                     }
 
                                     // now, lowerScev < upperScev
-                                    auto lowerVal = tryExpandSCEV(module, MAM, lowerScev, llvm::Type::getInt8PtrTy(context, llvm::cast<llvm::PointerType>(point->pointerOperand->getType())->getAddressSpace()), preheader->getTerminator());
-                                    auto upperVal = tryExpandSCEV(module, MAM, upperScev, llvm::Type::getInt8PtrTy(context, llvm::cast<llvm::PointerType>(point->pointerOperand->getType())->getAddressSpace()), preheader->getTerminator());
+                                    auto lowerVal = tryExpandSCEV(lowerScev, llvm::Type::getInt8PtrTy(context, llvm::cast<llvm::PointerType>(point->pointerOperand->getType())->getAddressSpace()), preheader->getTerminator());
+                                    auto upperVal = tryExpandSCEV(upperScev, llvm::Type::getInt8PtrTy(context, llvm::cast<llvm::PointerType>(point->pointerOperand->getType())->getAddressSpace()), preheader->getTerminator());
 
                                     if (lowerVal && upperVal) {
                                         exitValueComputed += !i;
