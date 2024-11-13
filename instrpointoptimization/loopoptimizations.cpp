@@ -48,7 +48,7 @@ llvm::Value* LoopHoister::tryExpandSCEV(const llvm::SCEV* scevVal, llvm::Type* e
     } else HANDLE_UNKOWN_SCEV(scevVal);
 }
 
-void LoopHoister::hoistLoopBoundMemAccesses(llvm::DenseMap<llvm::Function*, llvm::DenseMap<llvm::Instruction*, llvm::DenseSet<InstrumentationPoint*>>>& funcToInstPoints) {
+void LoopHoister::hoistLoopBoundMemAccesses(llvm::DenseMap<llvm::Function*, llvm::DenseMap<llvm::Use*, llvm::DenseSet<InstrumentationPoint*>>>& funcToInstPoints) {
     auto& context = module.getContext();
 
     size_t pointsInLoops = 0;
@@ -63,11 +63,11 @@ void LoopHoister::hoistLoopBoundMemAccesses(llvm::DenseMap<llvm::Function*, llvm
     
     for (auto& [func, instPoints] : funcToInstPoints) {
         // which instrumentation point descibes which 
-        llvm::DenseMap<InstrumentationPoint*, llvm::DenseSet<llvm::Instruction*>> pointToInstructions;
+        llvm::DenseMap<InstrumentationPoint*, llvm::DenseSet<llvm::Use*>> pointToUses;
         for (auto& [inst, points] : instPoints) {
             for (auto point : points) {
-                assert(!pointToInstructions.count(point));
-                pointToInstructions[point].insert(inst);
+                assert(!pointToUses.count(point));
+                pointToUses[point].insert(inst);
             }
         }
 
@@ -91,7 +91,7 @@ void LoopHoister::hoistLoopBoundMemAccesses(llvm::DenseMap<llvm::Function*, llvm
                 // we do this earlier as well, but these loop-transformations might re-introduce cases
 
                 llvm::DenseMap<llvm::Value*, llvm::DenseSet<InstrumentationPoint*>> ptrToPoints;
-                for (auto& [point, _] : pointToInstructions) 
+                for (auto& [point, _] : pointToUses) 
                     ptrToPoints[pointerDetector.strip_pointer_casts(point->pointerOperand)].insert(point);
                 for (auto& [_, points] : ptrToPoints) {
                     // it's possible that the summarization transformation resulted in multiple of the same points at the same location
@@ -104,11 +104,11 @@ void LoopHoister::hoistLoopBoundMemAccesses(llvm::DenseMap<llvm::Function*, llvm
                     for (auto& [insertBefore, points] : insertBfToPoints) {
                         // use the first point for all relevant instructions
                         for (auto it = std::next(points.begin()); it != points.end(); ) {
-                            assert(pointToInstructions.count(*it));
-                            auto instsTracked = pointToInstructions[*it];
-                            assert(pointToInstructions.count(*points.begin()));
-                            pointToInstructions[*points.begin()].insert(instsTracked.begin(), instsTracked.end());
-                            pointToInstructions.erase(*it);
+                            assert(pointToUses.count(*it));
+                            auto instsTracked = pointToUses[*it];
+                            assert(pointToUses.count(*points.begin()));
+                            pointToUses[*points.begin()].insert(instsTracked.begin(), instsTracked.end());
+                            pointToUses.erase(*it);
                             points.erase(it++);
                             change = true;
                         }
@@ -132,7 +132,7 @@ void LoopHoister::hoistLoopBoundMemAccesses(llvm::DenseMap<llvm::Function*, llvm
                             assert(erased);
                             if (!::isPotentiallyReachable(funcStart, point->insertBefore, exclusionSet, &domTree, &loopInfo)) {
                                 // point is not reachable, delete it
-                                pointToInstructions.erase(point);
+                                pointToUses.erase(point);
                                 change = true;
                             }
                             exclusionSet.insert(point->insertBefore);
@@ -144,7 +144,7 @@ void LoopHoister::hoistLoopBoundMemAccesses(llvm::DenseMap<llvm::Function*, llvm
             llvm::DenseMap<llvm::Loop*, llvm::DenseSet<InstrumentationPoint*>> hoistablePoints;
             { // then, we do the split-postdom preheader check, to maximally hoist non-mustExecute points
                 llvm::DenseMap<llvm::Value*, llvm::DenseSet<InstrumentationPoint*>> ptrToPoints;
-                for (auto& [point, _] : pointToInstructions) 
+                for (auto& [point, _] : pointToUses) 
                     ptrToPoints[pointerDetector.strip_pointer_casts(point->pointerOperand)].insert(point);
                 
                 for (auto& [_, ptrPoints] : ptrToPoints) {
@@ -170,14 +170,14 @@ void LoopHoister::hoistLoopBoundMemAccesses(llvm::DenseMap<llvm::Function*, llvm
                             // we can safely move this point to the preheader
                             // only insert the point once: erase all except 1 from the func points
                             assert(!loopPoints.empty());
-                            llvm::DenseSet<llvm::Instruction*> insts;
+                            llvm::DenseSet<llvm::Use*> uses;
                             for (auto point : loopPoints) {
-                                for (auto inst : pointToInstructions[point])
-                                    insts.insert(inst);
-                                pointToInstructions.erase(point);
+                                for (auto use : pointToUses[point])
+                                    uses.insert(use);
+                                pointToUses.erase(point);
                             }
-                            for (auto inst : insts)
-                                pointToInstructions[*loopPoints.begin()].insert(inst);
+                            for (auto use : uses)
+                                pointToUses[*loopPoints.begin()].insert(use);
                             hoistablePoints[loop].insert(*loopPoints.begin());
                         }
                     }
@@ -194,9 +194,9 @@ void LoopHoister::hoistLoopBoundMemAccesses(llvm::DenseMap<llvm::Function*, llvm
             };
 
             // then, we do the more classic summarization and IV-independent hoisting
-            llvm::DenseMap<InstrumentationPoint*, llvm::DenseSet<llvm::Instruction*>> pointsToInsert;
+            llvm::DenseMap<InstrumentationPoint*, llvm::DenseSet<llvm::Use*>> pointsToInsert;
             llvm::DenseSet<InstrumentationPoint*> ivIndependentPoints;
-            for (auto& [point, _] : pointToInstructions) {
+            for (auto& [point, _] : pointToUses) {
                 if (auto loop = loopInfo.getLoopFor(point->insertBefore->getParent())) {
                     // gcc has loops which dont seem to be in this form
                     // assert(loop->isLoopSimplifyForm());
@@ -280,10 +280,10 @@ void LoopHoister::hoistLoopBoundMemAccesses(llvm::DenseMap<llvm::Function*, llvm
 
                                         // insert the evidence for the upperVal
                                         // this is temporary, we can create a better packet format some day that doesn't skip over blocks
-                                        assert(pointToInstructions.count(point));
+                                        assert(pointToUses.count(point));
                                         auto exitPoint = new InstrumentationPoint(*point);
                                         exitPoint->pointerOperand = upperVal;
-                                        pointsToInsert[exitPoint] = pointToInstructions[point];
+                                        pointsToInsert[exitPoint] = pointToUses[point];
                                         change = true;
                                     } else {
                                         unexpandableExitvalue += !i;
@@ -315,15 +315,15 @@ void LoopHoister::hoistLoopBoundMemAccesses(llvm::DenseMap<llvm::Function*, llvm
 
             if (!pointsToInsert.empty())
                 assert(change);
-            for (auto& [point, insts] : pointsToInsert)
-                pointToInstructions[point].insert(insts.begin(), insts.end());
+            for (auto& [point, uses] : pointsToInsert)
+                pointToUses[point].insert(uses.begin(), uses.end());
             i++;
         } while (change);
 
         // update the output parameter with the new instpoints
         instPoints.clear();
-        for (auto& [point, insts] : pointToInstructions)
-            for (auto inst : insts)
+        for (auto& [point, uses] : pointToUses)
+            for (auto inst : uses)
                 instPoints[inst].insert(point);
         
         // the number of described instructions can be different here than originally,
