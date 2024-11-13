@@ -7,6 +7,10 @@
 #include <llvm/Transforms/Utils/ScalarEvolutionExpander.h>
 #include <llvm/IR/Verifier.h>
 
+LoopHoister::LoopHoister(llvm::Module& M, llvm::ModuleAnalysisManager& MAM) : 
+    module{M}, MAM{MAM}
+{}
+
 llvm::SCEVExpander& LoopHoister::getOrCreateSCEVExpander(llvm::Function* func, llvm::ScalarEvolution& SCEV) {
     auto& dataLayout = func->getParent()->getDataLayout();
     auto [expanderIt, inserted] = scevExpanders.try_emplace(func, SCEV, dataLayout, "expanded");
@@ -194,9 +198,13 @@ void LoopHoister::hoistLoopBoundMemAccesses(llvm::DenseMap<llvm::Function*, llvm
             };
 
             // then, we do the more classic summarization and IV-independent hoisting
-            llvm::DenseMap<InstrumentationPoint*, llvm::DenseSet<llvm::Use*>> pointsToInsert;
             llvm::DenseSet<InstrumentationPoint*> ivIndependentPoints;
             for (auto& [point, _] : pointToUses) {
+                // both pointer operands would need to satisfy the conditions for hoisting
+                //  that's currently not implemented, so we skip the rangechecks here
+                if (point->isRangeCheck()) 
+                    continue;
+
                 if (auto loop = loopInfo.getLoopFor(point->insertBefore->getParent())) {
                     // gcc has loops which dont seem to be in this form
                     // assert(loop->isLoopSimplifyForm());
@@ -219,6 +227,7 @@ void LoopHoister::hoistLoopBoundMemAccesses(llvm::DenseMap<llvm::Function*, llvm
                     }
 
                     bool changed = false;
+                    assert(!point->isRangeCheck()); // should not get here
                     if (loop->makeLoopInvariant(point->pointerOperand, changed)) {
                         assert(!changed);
                         if (hoistable) {
@@ -274,16 +283,12 @@ void LoopHoister::hoistLoopBoundMemAccesses(llvm::DenseMap<llvm::Function*, llvm
                                             ASSERT_ELSE_UNKOWN(lowerVal != upperVal, lowerVal);
                                         }
                                         
-                                        // insert the evidence for the lowerVal
+                                        // update the point with the lower & higher information
+                                        assert(!point->isRangeCheck());
                                         point->insertBefore = preheader->getTerminator();
                                         point->pointerOperand = lowerVal;
+                                        point->endOfAddressRange = upperVal;
 
-                                        // insert the evidence for the upperVal
-                                        // this is temporary, we can create a better packet format some day that doesn't skip over blocks
-                                        assert(pointToUses.count(point));
-                                        auto exitPoint = new InstrumentationPoint(*point);
-                                        exitPoint->pointerOperand = upperVal;
-                                        pointsToInsert[exitPoint] = pointToUses[point];
                                         change = true;
                                     } else {
                                         unexpandableExitvalue += !i;
@@ -313,10 +318,6 @@ void LoopHoister::hoistLoopBoundMemAccesses(llvm::DenseMap<llvm::Function*, llvm
                 }
             }
 
-            if (!pointsToInsert.empty())
-                assert(change);
-            for (auto& [point, uses] : pointsToInsert)
-                pointToUses[point].insert(uses.begin(), uses.end());
             i++;
         } while (change);
 
