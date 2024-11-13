@@ -52,7 +52,7 @@ llvm::Value* LoopHoister::tryExpandSCEV(const llvm::SCEV* scevVal, llvm::Type* e
     } else HANDLE_UNKOWN_SCEV(scevVal);
 }
 
-void LoopHoister::hoistLoopBoundMemAccesses(llvm::DenseMap<llvm::Function*, llvm::DenseMap<llvm::Use*, llvm::DenseSet<InstrumentationPoint*>>>& funcToInstPoints) {
+void LoopHoister::hoistLoopBoundMemAccesses(llvm::DenseMap<llvm::Function*, llvm::DenseMap<llvm::Use*, InstrumentationPoint*>>& funcToInstPoints) {
     auto& context = module.getContext();
 
     size_t pointsInLoops = 0;
@@ -65,14 +65,12 @@ void LoopHoister::hoistLoopBoundMemAccesses(llvm::DenseMap<llvm::Function*, llvm
     size_t operandDependsOnIV = 0;
     size_t operandDoesNotDependOnIV = 0;
     
-    for (auto& [func, instPoints] : funcToInstPoints) {
-        // which instrumentation point descibes which 
+    for (auto& [func, useToPoint] : funcToInstPoints) {
+        // which instrumentation point descibes which use
         llvm::DenseMap<InstrumentationPoint*, llvm::DenseSet<llvm::Use*>> pointToUses;
-        for (auto& [inst, points] : instPoints) {
-            for (auto point : points) {
-                assert(!pointToUses.count(point));
-                pointToUses[point].insert(inst);
-            }
+        for (auto& [use, point] : useToPoint) {
+            assert(!pointToUses.count(point));
+            pointToUses[point].insert(use);
         }
 
         bool change = false;
@@ -322,10 +320,12 @@ void LoopHoister::hoistLoopBoundMemAccesses(llvm::DenseMap<llvm::Function*, llvm
         } while (change);
 
         // update the output parameter with the new instpoints
-        instPoints.clear();
+        useToPoint.clear();
         for (auto& [point, uses] : pointToUses)
-            for (auto inst : uses)
-                instPoints[inst].insert(point);
+            for (auto use : uses) {
+                ASSERT_ELSE_UNKOWN(!useToPoint.count(use), use->getUser());
+                useToPoint[use] = point;
+            }
         
         // the number of described instructions can be different here than originally,
         // because the split-dom check might remove points entirely
