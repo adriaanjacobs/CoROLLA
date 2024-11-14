@@ -25,9 +25,8 @@ struct InstrumentationPoint {
     }
 
     bool operator==(const InstrumentationPoint& other) const {
-        return std::memcmp(this, &other, sizeof(*this));
+        return std::memcmp(this, &other, sizeof(*this)) == 0;
     }
-
 } __attribute__((packed)); // to make sure the memcmp works wrt padding
 
 class LoopHoister {

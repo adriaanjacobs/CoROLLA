@@ -69,7 +69,6 @@ void LoopHoister::hoistLoopBoundMemAccesses(llvm::DenseMap<llvm::Function*, llvm
         // which instrumentation point descibes which use
         llvm::DenseMap<InstrumentationPoint*, llvm::DenseSet<llvm::Use*>> pointToUses;
         for (auto& [use, point] : useToPoint) {
-            assert(!pointToUses.count(point));
             pointToUses[point].insert(use);
         }
 
