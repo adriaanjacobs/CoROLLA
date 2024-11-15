@@ -64,7 +64,7 @@ void LoopHoister::hoistLoopBoundMemAccesses(llvm::DenseMap<llvm::Function*, llvm
     size_t unexpandableExitvalue = 0;
     size_t operandDependsOnIV = 0;
     size_t operandDoesNotDependOnIV = 0;
-    
+
     for (auto& [func, useToPoint] : funcToInstPoints) {
         // which instrumentation point descibes which use
         llvm::DenseMap<InstrumentationPoint*, llvm::DenseSet<llvm::Use*>> pointToUses;
@@ -87,6 +87,15 @@ void LoopHoister::hoistLoopBoundMemAccesses(llvm::DenseMap<llvm::Function*, llvm
 
             auto& loopInfo = FAM.getResult<llvm::LoopAnalysis>(*func);
             auto& domTree = FAM.getResult<llvm::DominatorTreeAnalysis>(*func);
+
+            { // sanity check the input here: all points should always dominate their uses
+                auto insertBfDominates = [&] (InstrumentationPoint* point, llvm::Use* use) -> bool {
+                    return point->insertBefore == use->getUser() || domTree.dominates(point->insertBefore, *use);
+                };
+                for (auto& [point, uses] : pointToUses) 
+                    for (auto& use : uses) 
+                        assert(insertBfDominates(point, use));
+            }
             
             { // delete split-dominated points
                 // we do this earlier as well, but these loop-transformations might re-introduce cases
@@ -180,8 +189,22 @@ void LoopHoister::hoistLoopBoundMemAccesses(llvm::DenseMap<llvm::Function*, llvm
                 }
             }
 
-            llvm::DenseMap<llvm::Loop*, llvm::DenseSet<InstrumentationPoint*>> hoistablePoints;
+            llvm::DenseMap<llvm::Loop* /* loop containing these */, llvm::DenseSet<InstrumentationPoint*>> hoistablePoints;
             { // then, we do the split-postdom preheader check, to maximally hoist non-mustExecute points
+                // the basic idea is that the same check might be performed on every possible path through the function
+                //  in that case, we can still hoist the loop-bound ones into the preheader of their loop: they would execute anyway
+                //  (even though they may not postdominate the loop preheader themselves)
+                //  very useful for code like:
+                //
+                //  while (...) 
+                //      if (...)
+                //          check();
+                //      else
+                //          check();
+                //
+                //  neither of the checks postdominate the preheader invididually, but both together totally do. 
+                //  they might _still_ not be hoistable though, e.g., if the check happens on a loop-variant pointer. 
+
                 llvm::DenseMap<llvm::Value*, llvm::DenseSet<InstrumentationPoint*>> ptrToPoints;
                 for (auto& [point, _] : pointToUses) 
                     ptrToPoints[pointerDetector.strip_pointer_casts(point->pointerOperand)].insert(point);
@@ -197,31 +220,37 @@ void LoopHoister::hoistLoopBoundMemAccesses(llvm::DenseMap<llvm::Function*, llvm
                             loopBoundPoints[loop].insert(point);
                     
                     for (auto& [loop, loopPoints] : loopBoundPoints) {
+                        // all of these loopPoints have the same ptrOperand and occur in the same loop.
                         assert(!loopPoints.empty());
                         auto preheader = loop->getLoopPreheader();
                         assert(!funcTerminators.empty());
                         // are any of the function exits reachable from the preheader without going through the original point?
-                        // if not -> we can safely move this point to the preheader
+                        // if not -> we might be able to move this point to the preheader
                         auto anyTermReachable = llvm::any_of(funcTerminators, [&] (llvm::Instruction* term) -> bool {
                             return !exclusionSet.contains(&preheader->front()) && ::isPotentiallyReachable(&preheader->front(), term, exclusionSet, &domTree, &loopInfo);
                         });
                         if (!anyTermReachable) {
-                            // we can safely move this point to the preheader
-                            // only insert the point once: erase all except 1 from the func points
+                            // we might be able to move this point to the preheader
+                            //  !! only if the ptrOperand itself can be constructed outside the loop
+                            // we mark these as hoistable and let the later instrumentation figure out 
+                            //  whether it's actually true.
+                            // this will result in multiple copies of the same check in the preheader,
+                            //  but the next iteration should filter that out
                             assert(!loopPoints.empty());
-                            llvm::DenseSet<llvm::Use*> uses;
-                            for (auto point : loopPoints) {
-                                for (auto use : pointToUses[point])
-                                    uses.insert(use);
-                                pointToUses.erase(point);
+                            for (auto loopPoint : loopPoints) {
+                                // range checks can be used as part of the split-postdom front, but
+                                //  they cannot comprehensively cancel each other out
+                                //  we leave the overlap analysis that would more comprehensively do this
+                                //  for a later day
+                                // however, this doesn't mean that we cant hoist range checks. 
+                                //  if the range check is alone here, it is not a split-postdom, 
+                                //  and it should be hoistable!
+                                if (!loopPoint->isRangeCheck() || loopPoints.size() == 1)
+                                    hoistablePoints[loop].insert(loopPoint);
                             }
-                            for (auto use : uses)
-                                pointToUses[*loopPoints.begin()].insert(use);
-                            hoistablePoints[loop].insert(*loopPoints.begin());
                         }
                     }
                 }
-
             }
 
             auto isHoistable = [&] (InstrumentationPoint* point) -> bool {
@@ -229,7 +258,7 @@ void LoopHoister::hoistLoopBoundMemAccesses(llvm::DenseMap<llvm::Function*, llvm
                 assert(loop);
                 if (!hoistablePoints.count(loop))
                     return false;
-                return hoistablePoints[loop].contains(point);
+                return hoistablePoints.find(loop)->getSecond().contains(point);
             };
 
             // then, we do the more classic summarization and IV-independent hoisting

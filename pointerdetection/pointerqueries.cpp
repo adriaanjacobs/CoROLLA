@@ -3,6 +3,8 @@
 #include <llvm-utils/util.h>
 #include <llvm-utils/safetyanalysis/allocationbounds.h>
 
+#include <llvm/Analysis/ValueTracking.h>
+
 // simple loop-bound pointer iteration check
 // returns null if unsuccessful (i.e. it did nothing)
 llvm::Value* findLoopBoundPHIBase(llvm::PHINode* phi, llvm::ScalarEvolution& SCEV) {
@@ -164,7 +166,7 @@ llvm::Value* PointerDetector::strip_pointer_casts(llvm::Value *pointer) const {
         if (auto gep = llvm::dyn_cast<llvm::GEPOperator>(pointer)) {
             auto operand = gep->getPointerOperand();
             auto offset = findConstantOffset(gep);
-            if (offset.has_value() && offset->isNullValue()) {
+            if (offset.has_value() && offset->isZero()) {
                 pointer = operand;
             } else break;
         } else if (auto binaryOp = llvm::dyn_cast<llvm::BinaryOperator>(pointer)) {
@@ -220,8 +222,8 @@ llvm::Value* PointerDetector::strip_pointer_casts(llvm::Value *pointer) const {
 }
 
 std::optional<llvm::APInt> PointerDetector::findConstantOffset(llvm::GEPOperator* gep) const {
-    llvm::APInt offset(64, 0);
     if (gep->hasAllConstantIndices()) {
+        llvm::APInt offset{64, 0};
         for (auto& idxuse : gep->indices())
             assert(llvm::isa<llvm::ConstantInt>(idxuse.get()));
         bool val = gep->accumulateConstantOffset(module.getDataLayout(), offset);
