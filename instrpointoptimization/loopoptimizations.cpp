@@ -94,7 +94,7 @@ void LoopHoister::hoistLoopBoundMemAccesses(llvm::DenseMap<llvm::Function*, llvm
                 llvm::DenseMap<llvm::Value*, llvm::DenseSet<InstrumentationPoint*>> ptrToPoints;
                 for (auto& [point, _] : pointToUses) 
                     ptrToPoints[pointerDetector.strip_pointer_casts(point->pointerOperand)].insert(point);
-                for (auto& [_, points] : ptrToPoints) {
+                for (auto& [_, samePtrPoints] : ptrToPoints) {
                     // it's possible that the summarization transformation resulted in multiple of the same points at the same location
                     // fix up places where that happened
 
@@ -113,19 +113,19 @@ void LoopHoister::hoistLoopBoundMemAccesses(llvm::DenseMap<llvm::Function*, llvm
                     //  this is clearly improper
 
                     llvm::DenseMap<llvm::Instruction*, llvm::DenseSet<InstrumentationPoint*>> insertBfToPoints;
-                    for (auto point : points)
+                    for (auto point : samePtrPoints)
                         insertBfToPoints[point->insertBefore].insert(point);
                     
-                    for (auto& [insertBefore, points] : insertBfToPoints) {
+                    for (auto& [insertBefore, sameBfPoints] : insertBfToPoints) {
                         // all these points share the same insertBf and pointerOperand!
                         // we pick one point and let it describe all other uses
                         //  if possible, we pick a range check. if there's multiple range checks, pick one but don't delete the others
                         llvm::DenseSet<InstrumentationPoint*> checksToKeep;
-                        for (auto& point : points)
+                        for (auto& point : sameBfPoints)
                             if (point->isRangeCheck())
                                 checksToKeep.insert(point);
                         
-                        auto singlePoint = [&, &points = points] () -> InstrumentationPoint* {
+                        auto singlePoint = [&, &points = sameBfPoints] () -> InstrumentationPoint* {
                             if (!checksToKeep.empty())
                                 return *checksToKeep.begin(); // using a range check
                             auto firstNonRangeCheck = *points.begin();
@@ -133,34 +133,40 @@ void LoopHoister::hoistLoopBoundMemAccesses(llvm::DenseMap<llvm::Function*, llvm
                             return firstNonRangeCheck;
                         } ();
 
-                        for (auto it = points.begin(); it != points.end();) {
+                        for (auto it = sameBfPoints.begin(); it != sameBfPoints.end();) {
                             if (!checksToKeep.contains(*it)) {
                                 // erase this one
                                 assert(pointToUses.count(*it));
                                 auto instsTracked = pointToUses[*it];
-                                assert(pointToUses.count(*points.begin()));
-                                pointToUses[*points.begin()].insert(instsTracked.begin(), instsTracked.end());
+                                assert(pointToUses.count(*sameBfPoints.begin()));
+                                pointToUses[*sameBfPoints.begin()].insert(instsTracked.begin(), instsTracked.end());
                                 pointToUses.erase(*it);
-                                points.erase(it++);
+                                samePtrPoints.erase(*it);
+                                sameBfPoints.erase(it++);
                                 change = true;
                             } else it++;
                         }
 
-                        assert(points.size() == checksToKeep.size());
+                        assert(sameBfPoints.size() == checksToKeep.size());
                     }
 
                     // now, no location contains multiple of the same checks
 
                     // is it possible to reach each point from the function entry without passing through any of the other points?
                     llvm::DenseSet<llvm::Instruction*> exclusionSet;
-                    for (auto point : points)
+                    for (auto point : samePtrPoints)
                         exclusionSet.insert(point->insertBefore);
                     auto funcStart = &func->getEntryBlock().front();
                     // if any of the points is the function start, it should be the only point
                     if (exclusionSet.contains(funcStart)) {
-                        assert(points.size() == 1);
+                        assert(samePtrPoints.size() == 1);
+                        assert((*samePtrPoints.begin())->insertBefore == funcStart);
                     } else {
-                        for (auto point : points) {
+                        for (auto point : samePtrPoints) {
+                            // range checks cannot be deleted by single-pointer checks, even when dominated
+                            //  however, range checks that start on the same base can still help eliminate single-pointer checks
+                            if (point->isRangeCheck()) 
+                                continue;
                             bool erased = exclusionSet.erase(point->insertBefore);
                             assert(erased);
                             if (!::isPotentiallyReachable(funcStart, point->insertBefore, exclusionSet, &domTree, &loopInfo)) {
@@ -180,13 +186,13 @@ void LoopHoister::hoistLoopBoundMemAccesses(llvm::DenseMap<llvm::Function*, llvm
                 for (auto& [point, _] : pointToUses) 
                     ptrToPoints[pointerDetector.strip_pointer_casts(point->pointerOperand)].insert(point);
                 
-                for (auto& [_, ptrPoints] : ptrToPoints) {
+                for (auto& [_, samePtrPoints] : ptrToPoints) {
                     llvm::DenseSet<llvm::Instruction*> exclusionSet;
-                    for (auto point : ptrPoints)
+                    for (auto point : samePtrPoints)
                         exclusionSet.insert(point->insertBefore);
 
                     llvm::DenseMap<llvm::Loop*, llvm::DenseSet<InstrumentationPoint*>> loopBoundPoints;
-                    for (auto point : ptrPoints)
+                    for (auto point : samePtrPoints)
                         if (auto loop = loopInfo.getLoopFor(point->insertBefore->getParent()))
                             loopBoundPoints[loop].insert(point);
                     
