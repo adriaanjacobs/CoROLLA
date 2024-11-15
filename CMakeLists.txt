@@ -50,3 +50,4 @@ target_link_libraries(llvmutils INTERFACE
     safetyanalysis
     addressability
 )
+target_include_directories(llvmutils INTERFACE include/)

@@ -29,6 +29,6 @@ Note that this code is only ever used with LLVM 15. In particular, there is no o
 Some of the subdirs contain dedicated pass runners. None of them do anything directly useful, I just use them for debugging and testing. Many of the libraries can be loaded into clang/opt, sometimes also at link time for LTO, but, again, none of them will do something useful with the analysis results. 
 
 ### Linking
-I intend to provide a single megalib for all of these in the future. Linking is currently annoying, having to figure out which component a particular analysis belongs to. 
+The easiest way to use these utils is by linking to the `llvmutils` cmake target. 
 
-Note that this code expects to link to the shared libLLVM.so megalib. If your usage code links to LLVM statically in any way, you will get "command-line option registered more than once" errors. Just link to the shared libLLVM.so object instead. 
+Note that this code expects to link to the shared `libLLVM.so` megalib. If your usage code links to LLVM statically in any way, you will get "command-line option registered more than once" errors. Just link everything to `libLLVM.so` instead. 
