@@ -98,6 +98,20 @@ void LoopHoister::hoistLoopBoundMemAccesses(llvm::DenseMap<llvm::Function*, llvm
                     // it's possible that the summarization transformation resulted in multiple of the same points at the same location
                     // fix up places where that happened
 
+                    // FIXME: when erasing points (i.e. allowing them to be checked by other points), 
+                    //  we have to ensure that the insertbefores of the points that we keep (to describe the others) dominate all the points
+                    //  they replace. Otherwise the inserted point may not execute for all memory accesses it intends to check
+                    //  check this here with a dominator check
+                    //  im currently seeing a case in benchmark.ll like:
+                    //
+                    //  if (cond)
+                    //      point1;
+                    //  else
+                    //      point2;
+                    //  
+                    //  where one of the points is somehow deleted, and the other point is supposed to cover for them
+                    //  this is clearly improper
+
                     llvm::DenseMap<llvm::Instruction*, llvm::DenseSet<InstrumentationPoint*>> insertBfToPoints;
                     for (auto point : points)
                         insertBfToPoints[point->insertBefore].insert(point);

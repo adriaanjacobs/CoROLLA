@@ -16,18 +16,10 @@ struct InstrumentationPoint {
         insertBefore{insertBefore}, pointerOperand{pointerOperand}
     {}
 
-    InstrumentationPoint(llvm::Instruction* insertBefore, llvm::Value* pointerOperand, llvm::Value* endOfAddressRange) : 
-        insertBefore{insertBefore}, pointerOperand{pointerOperand}, endOfAddressRange{endOfAddressRange}
-    {}
-
     bool isRangeCheck() const {
         return pointerOperand != endOfAddressRange;
     }
-
-    bool operator==(const InstrumentationPoint& other) const {
-        return std::memcmp(this, &other, sizeof(*this)) == 0;
-    }
-} __attribute__((packed)); // to make sure the memcmp works wrt padding
+};
 
 class LoopHoister {
     llvm::Module& module;
