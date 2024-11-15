@@ -117,21 +117,39 @@ void LoopHoister::hoistLoopBoundMemAccesses(llvm::DenseMap<llvm::Function*, llvm
                         insertBfToPoints[point->insertBefore].insert(point);
                     
                     for (auto& [insertBefore, points] : insertBfToPoints) {
-                        // use the first point for all relevant instructions
-                        for (auto it = std::next(points.begin()); it != points.end(); ) {
-                            assert(pointToUses.count(*it));
-                            auto instsTracked = pointToUses[*it];
-                            assert(pointToUses.count(*points.begin()));
-                            pointToUses[*points.begin()].insert(instsTracked.begin(), instsTracked.end());
-                            pointToUses.erase(*it);
-                            points.erase(it++);
-                            change = true;
+                        // all these points share the same insertBf and pointerOperand!
+                        // we pick one point and let it describe all other uses
+                        //  if possible, we pick a range check. if there's multiple range checks, pick one but don't delete the others
+                        llvm::DenseSet<InstrumentationPoint*> checksToKeep;
+                        for (auto& point : points)
+                            if (point->isRangeCheck())
+                                checksToKeep.insert(point);
+                        
+                        auto singlePoint = [&, &points = points] () -> InstrumentationPoint* {
+                            if (!checksToKeep.empty())
+                                return *checksToKeep.begin(); // using a range check
+                            auto firstNonRangeCheck = *points.begin();
+                            checksToKeep.insert(firstNonRangeCheck);
+                            return firstNonRangeCheck;
+                        } ();
+
+                        for (auto it = points.begin(); it != points.end();) {
+                            if (!checksToKeep.contains(*it)) {
+                                // erase this one
+                                assert(pointToUses.count(*it));
+                                auto instsTracked = pointToUses[*it];
+                                assert(pointToUses.count(*points.begin()));
+                                pointToUses[*points.begin()].insert(instsTracked.begin(), instsTracked.end());
+                                pointToUses.erase(*it);
+                                points.erase(it++);
+                                change = true;
+                            } else it++;
                         }
 
-                        assert(points.size() == 1);
+                        assert(points.size() == checksToKeep.size());
                     }
 
-                    // no location contains multiple of the same points
+                    // now, no location contains multiple of the same checks
 
                     // is it possible to reach each point from the function entry without passing through any of the other points?
                     llvm::DenseSet<llvm::Instruction*> exclusionSet;
