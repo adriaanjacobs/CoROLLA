@@ -137,9 +137,9 @@ void LoopHoister::hoistLoopBoundMemAccesses(llvm::DenseMap<llvm::Function*, llvm
                             if (!checksToKeep.contains(*it)) {
                                 // erase this one
                                 assert(pointToUses.count(*it));
-                                auto instsTracked = pointToUses[*it];
-                                assert(pointToUses.count(*sameBfPoints.begin()));
-                                pointToUses[*sameBfPoints.begin()].insert(instsTracked.begin(), instsTracked.end());
+                                auto usesDescribed = pointToUses[*it];
+                                assert(pointToUses.count(singlePoint));
+                                pointToUses[singlePoint].insert(usesDescribed.begin(), usesDescribed.end());
                                 pointToUses.erase(*it);
                                 samePtrPoints.erase(*it);
                                 sameBfPoints.erase(it++);
