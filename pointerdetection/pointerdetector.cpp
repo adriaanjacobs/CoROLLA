@@ -259,7 +259,7 @@ PointerDetector::PointerDetector(llvm::Module& module, llvm::ModuleAnalysisManag
                         numTrueGEPs += is_confirmed_pointer(gepInst);
                     }
 
-        llvm::errs() << "We detect " << numTrueGEPs << "/" << numGEPs << " (" << (100.0f*numTrueGEPs/numGEPs) << "%) of GEPs as real pointer arithmetic.\n";
+        llvm::outs() << "We detect " << numTrueGEPs << "/" << numGEPs << " (" << (100.0f*numTrueGEPs/numGEPs) << "%) of GEPs as real pointer arithmetic.\n";
     }
     
     llvm::outs() << pointers.size() << " pointers identified.\n";
