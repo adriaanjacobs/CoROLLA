@@ -53,7 +53,6 @@ public:
     // Analyze the bitcode/IR in the given LLVM module.
     Result run(llvm::Module& module, [[maybe_unused]] llvm::ModuleAnalysisManager& MAM);
 
-private:
     static void addPreparationPasses(llvm::ModulePassManager& MPM);
     static void addCleanupPasses(llvm::ModulePassManager& MPM);
 
