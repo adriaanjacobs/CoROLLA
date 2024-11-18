@@ -44,7 +44,9 @@ llvm::StringRef getValueDescription(llvm::Value* val) {
         return "constant pointer value";
     } else if (llvm::isa<llvm::UndefValue>(val)) {
         return "undef value";
-    } else HANDLE_UNKOWN_VALUE(val);
+    } else {
+        HANDLE_UNKOWN_VALUE(val);
+    }
 }
 
 std::optional<std::pair<llvm::APInt, llvm::APInt>> findMinimumAllocBounds(llvm::Value* allocInstr, llvm::Module& module, llvm::ModuleAnalysisManager& MAM) {
@@ -82,7 +84,12 @@ std::pair<llvm::APInt, llvm::APInt> findMmapBounds(llvm::CallBase* callInst, llv
 }
 
 std::pair<llvm::APInt, llvm::APInt> boundsOfReturnedPointeeType(llvm::CallBase* call) {
-    auto size = call->getModule()->getDataLayout().getTypeAllocSize(call->getCalledFunction()->getReturnType()->getPointerElementType());
+    auto returnedPointeeType = call->getCalledFunction()->getReturnType()->getPointerElementType();
+    if (auto structTy = llvm::dyn_cast<llvm::StructType>(returnedPointeeType)) {
+        if (structTy->isOpaque()) // probably at least 16 bytes big (?). i think 0 max size would be fine here too, to enforce that there is no ptr arith on here
+            return {llvm::APInt{64, 0}, llvm::APInt{64, 16}};
+    }
+    auto size = call->getModule()->getDataLayout().getTypeAllocSize(returnedPointeeType);
     // technically this pointer could be to an opaque struct, watch out
     ASSERT_ELSE_UNKOWN(size > 0, call);
     return {llvm::APInt{64, 0}, llvm::APInt{64, size, true}};
@@ -122,8 +129,6 @@ const decltype(builtinLibcCallToBounds) builtinLibcCallToBounds {
     {"alloca", nullptr}, // handled as LLVM alloca instruction
 
     // from EFT_STAT
-    {"__sysv_signal", nullptr},
-    {"signal", nullptr},
     {"sigset", nullptr},
     {"__ctype_b_loc", [] (llvm::Module& module, llvm::ModuleAnalysisManager& MAM, llvm::CallBase* callInst) -> std::pair<llvm::APInt, llvm::APInt> { 
         return boundsOfCTypeFunc();
@@ -147,7 +152,9 @@ const decltype(builtinLibcCallToBounds) builtinLibcCallToBounds {
     {"dcgettext", nullptr},
     {"dgettext", nullptr},
     {"dngettext", nullptr},
-    {"fdopen", nullptr},
+    {"fdopen", [] (llvm::Module& module, llvm::ModuleAnalysisManager& MAM, llvm::CallBase* callInst) -> std::pair<llvm::APInt, llvm::APInt> {
+        return boundsOfReturnedPointeeType(callInst);
+    }},
     {"gcry_strerror", nullptr},
     {"gcry_strsource", nullptr},
     {"getgrgid", nullptr},
@@ -195,8 +202,17 @@ const decltype(builtinLibcCallToBounds) builtinLibcCallToBounds {
     // from ExtAPI
     {"\01_fopen", nullptr},
     {"\01fopen64", nullptr},
+    {"fopen", [] (llvm::Module& module, llvm::ModuleAnalysisManager& MAM, llvm::CallBase* callInst) -> std::pair<llvm::APInt, llvm::APInt> {
+        return boundsOfReturnedPointeeType(callInst);
+    }},
+    {"fopen64", nullptr},
+    {"fopencookie", nullptr},
     {"\01readdir64", nullptr},
     {"\01tmpfile64", nullptr},
+    {"tmpfile", [] (llvm::Module& module, llvm::ModuleAnalysisManager& MAM, llvm::CallBase* callInst) -> std::pair<llvm::APInt, llvm::APInt> {
+        return boundsOfReturnedPointeeType(callInst);
+    }},
+    {"tmpfile64", nullptr},
     {"BIO_new_socket", nullptr},
     {"FT_Get_Sfnt_Table", nullptr},
     {"FcFontList", nullptr},
@@ -256,9 +272,6 @@ const decltype(builtinLibcCallToBounds) builtinLibcCallToBounds {
     {"cairo_image_surface_create_for_data", nullptr},
     {"cairo_pattern_create_for_surface", nullptr},
     {"cairo_surface_create_similar", nullptr},
-    {"fopen", nullptr},
-    {"fopen64", nullptr},
-    {"fopencookie", nullptr},
     {"g_scanner_new", nullptr},
     {"gcry_sexp_nth_mpi", nullptr},
     {"gzdopen", nullptr},
@@ -296,8 +309,6 @@ const decltype(builtinLibcCallToBounds) builtinLibcCallToBounds {
     {"setmntent", nullptr},
     {"shmat", nullptr},
     {"tempnam", nullptr},
-    {"tmpfile", nullptr},
-    {"tmpfile64", nullptr},
     {"xalloc", nullptr},
     {"xcalloc", nullptr},
     {"xmalloc", nullptr},
@@ -337,7 +348,11 @@ const decltype(builtinLibcCallToBounds) builtinLibcCallToBounds {
     {"XcursorGetTheme", nullptr},
     {"__strdup", nullptr},
     {"crypt", nullptr},
-    {"ctime", nullptr},
+    {"ctime", [] (llvm::Module& module, llvm::ModuleAnalysisManager& MAM, llvm::CallBase* call) -> std::pair<llvm::APInt, llvm::APInt> {
+        auto len = strlen("Wed Jun 30 21:49:08 1993\n");
+        assert(len == 25); // this is pretty much defined this way by the spec
+        return {llvm::APInt{64, 0}, llvm::APInt{64, len + 1}};
+    }},
     {"dlerror", nullptr},
     {"gai_strerror", nullptr},
     {"gcry_cipher_algo_name", nullptr},
