@@ -21,6 +21,7 @@ public:
         // because provably unmapped memory (like NULL) is still considered in bounds
         bool isInBounds(llvm::Value* offsetPtr, llvm::APInt offset = llvm::APInt{64,0});
 
+        // does not update cache, does not update bailstats. Useful for non-isinbounds range queries
         bool isInRange_nonCached(llvm::Value* offsetPtr, llvm::APInt offset, const std::function<std::optional<bool>(llvm::Value*, llvm::APInt, DIRECTION)>& isInRange);
 
         void printBailStats();
@@ -28,14 +29,24 @@ public:
         // i don't need to differentiate between offset here FOR MY CURRENT CLONE USECASE
         llvm::DenseMap<llvm::Argument*, llvm::DenseMap<llvm::CallBase*, std::bitset<2>>> safeCallSites;
     private:
-        
+        struct IsInBoundsResult {
+            bool inBounds;
+            llvm::StringRef explanation;
+
+            static IsInBoundsResult False(llvm::StringRef expl) {
+                return IsInBoundsResult{false, expl};
+            }
+
+            static IsInBoundsResult True() {
+                return IsInBoundsResult{true, ""};
+            }
+        };
         template<DIRECTION DIR>
-        bool isInBounds_internal(llvm::Value* offsetPtr, llvm::APInt storeSize, const std::function<std::optional<bool>(llvm::Value*, llvm::APInt, DIRECTION)>& isInRange, bool checkTheCache = true);
+        IsInBoundsResult isInBounds_internal(llvm::Value* offsetPtr, llvm::APInt storeSize, const std::function<std::optional<bool>(llvm::Value*, llvm::APInt, DIRECTION)>& isInRange, bool checkTheCache = true);
         std::optional<bool> isInCache(llvm::Value* offsetPtr, llvm::APInt offset) const;
 
         llvm::DenseMap<llvm::Value*, llvm::DenseMap<llvm::APInt, std::optional<bool>>> boundsCache;
         llvm::DenseMap<llvm::StringRef, size_t> bailStats;
-        llvm::Value* mostRecentDecider = nullptr;
         llvm::Module& module;
         llvm::ModuleAnalysisManager& MAM;
     };

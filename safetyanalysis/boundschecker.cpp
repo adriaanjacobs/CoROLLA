@@ -30,6 +30,7 @@ void BoundsChecker::printBailStats() {
                     max = it;
             return max;
         } ();
+        assert(maxIt->getFirst() != "");
         llvm::outs() << "\t#" << rank << ": " << maxIt->getFirst() << ". " << maxIt->getSecond() << " occurrences.\n";
         rank++;
         bailStats.erase(maxIt);
@@ -65,17 +66,18 @@ bool BoundsChecker::isInBounds(llvm::Value* offsetPtr, llvm::APInt storeSize) {
     // don't add for minimal
     if (ptrInserted || offsetInserted) {
         assert(offsetIt->getSecond() == std::nullopt);
-        bool inBounds = isInBounds_internal<UPPER>(offsetPtr, storeSize, isInRange) && isInBounds_internal<LOWER>(offsetPtr, llvm::APInt{64,0}, isInRange);
-        // if (!inBounds && llvm::isa<llvm::Constant>(MAM.getResult<PointerDetectionAnalysis>(module).strip_pointer_casts(offsetPtr))) {
-        //     BREAKPOINT();
-        //     volatile bool debugInBoundsUpper = isInBounds_internal<UPPER>(offsetPtr, storeSize, isInRange);
-        //     volatile bool debugInBoundsLower = isInBounds_internal<LOWER>(offsetPtr, llvm::APInt{64,0}, isInRange);
-        //     llvm::outs() << "upper: " << debugInBoundsUpper << ", lower: " << debugInBoundsLower << "\n";
-        // }
+        // compute upper & lower inbounds
+        auto upperBoundsInfo = isInBounds_internal<UPPER>(offsetPtr, storeSize, isInRange);
+        auto lowerBoundsInfo = isInBounds_internal<LOWER>(offsetPtr, llvm::APInt{64,0}, isInRange);
+        
+        // update the bailstats
+        if (upperBoundsInfo.explanation != "")
+            bailStats[upperBoundsInfo.explanation]++;
+        if (lowerBoundsInfo.explanation != "")
+            bailStats[lowerBoundsInfo.explanation]++;
 
-        if (!inBounds)
-            bailStats[getValueDescription(mostRecentDecider)]++;
-        offsetIt->getSecond() = inBounds;
+        // update the cache
+        offsetIt->getSecond() = upperBoundsInfo.inBounds && lowerBoundsInfo.inBounds;
     }
     assert(offsetIt->getSecond().has_value());
     return offsetIt->getSecond().value();
@@ -99,11 +101,11 @@ llvm::StringRef getFuncName(llvm::Value* val) {
 }
 
 bool BoundsChecker::isInRange_nonCached(llvm::Value* offsetPtr, llvm::APInt offset, const std::function<std::optional<bool>(llvm::Value*, llvm::APInt, DIRECTION)>& isInRange) {
-    return isInBounds_internal<UPPER>(offsetPtr, offset, isInRange, false) && isInBounds_internal<LOWER>(offsetPtr, offset, isInRange, false);
+    return isInBounds_internal<UPPER>(offsetPtr, offset, isInRange, false).inBounds && isInBounds_internal<LOWER>(offsetPtr, offset, isInRange, false).inBounds;
 }
 
 template<DIRECTION DIR>
-bool BoundsChecker::isInBounds_internal(llvm::Value* offsetPtr, llvm::APInt offset, const std::function<std::optional<bool>(llvm::Value*, llvm::APInt, DIRECTION)>& isInRange, bool checkTheCache) {
+BoundsChecker::IsInBoundsResult BoundsChecker::isInBounds_internal(llvm::Value* offsetPtr, llvm::APInt offset, const std::function<std::optional<bool>(llvm::Value*, llvm::APInt, DIRECTION)>& isInRange, bool checkTheCache) {
     struct PassedValue {
         llvm::Value* val;
         llvm::APInt offset;
@@ -113,7 +115,6 @@ bool BoundsChecker::isInBounds_internal(llvm::Value* offsetPtr, llvm::APInt offs
     // llvm::outs() << rand() << ": Called findoffset (nested level: " << size << ")\n";
     run_on_destruct resetPassedInstrs([&](){
         assert(passedInstrs.size() >= 1);
-        this->mostRecentDecider = passedInstrs.back().val;
         assert(size <= passedInstrs.size());
         passedInstrs.erase(passedInstrs.begin() + size, passedInstrs.end());
         assert(passedInstrs.size() == size);
@@ -132,9 +133,9 @@ bool BoundsChecker::isInBounds_internal(llvm::Value* offsetPtr, llvm::APInt offs
         });
         if (passedValIt != passedInstrs.end()) {
             if (passedValIt->offset == offset)
-                return true; // dataflow back to myself with no offset difference? safe
-            else
-                return false; // may change offset indefinitely
+                return IsInBoundsResult::True(); // dataflow back to myself with no offset difference? safe
+            else 
+                return IsInBoundsResult::False("recursive self-dependence with non-zero offset"); // may change offset indefinitely
         }
 
         auto oldCurrent = current;
@@ -142,40 +143,41 @@ bool BoundsChecker::isInBounds_internal(llvm::Value* offsetPtr, llvm::APInt offs
 
         if (checkTheCache)
             if (auto val = isInCache(current, offset))
-                return val.value();
+                return {val.value(), ""};
 
         if (auto retVal = isInRange(current, offset, DIR)) {
             assert(retVal.has_value());
-            return retVal.value();
+            if (retVal.value() == false)
+                return IsInBoundsResult::False("alloc: not in bounds of allocsite");
+            return IsInBoundsResult::True();
         } else if (llvm::isa<llvm::ConstantPointerNull, llvm::ConstantInt>(current)) {
             if (auto constInt = llvm::dyn_cast<llvm::ConstantInt>(current))
                 offset += constInt->getValue();
             llvm::ConstantRange userspace({64, 8'388'608U}, {64, UINT64_MAX >> 17});
             if (userspace.contains(offset)) {
                 // llvm::outs() << "Offset to NULL: " << offset << "\n";
-                return false;
+                return IsInBoundsResult::False("constant: large fixed userpace address");
             }
-            return true; // the program will crash when dereferencing these anyway
+            return IsInBoundsResult::True(); // the program will crash when dereferencing these anyway
         } else if (auto argument = llvm::dyn_cast<llvm::Argument>(current)) {
             auto function = argument->getParent();
-            // if (!function->hasInternalLinkage())
-            //     return false;
 
             auto& callSiteAnalysis = MAM.getResult<CallSiteAnalysis>(module); 
             llvm::DenseSet<llvm::Value*> incomingVals;
             bool isComplete = callSiteAnalysis.getIncomingValuesForArgument(argument, incomingVals);
             if (!isComplete)
-                return false;
+                return IsInBoundsResult::False("arg: no complete callsite info");
             for (auto argOperand : incomingVals) {
                 assert(argOperand->getType() == argument->getType());
-                if (!isInBounds_internal<DIR>(argOperand, offset, isInRange)) 
-                    return false;
+                auto result = isInBounds_internal<DIR>(argOperand, offset, isInRange);
+                if (!result.inBounds) 
+                    return result;
             }
-            return true;
+            return IsInBoundsResult::True();
         } else if (auto call = llvm::dyn_cast<llvm::CallBase>(current)) {
             auto knownCallees = ::getKnownCallees(call);
             if (knownCallees.empty())
-                return false;
+                return IsInBoundsResult::False("call: unanalyzable indirect");
 
             for (auto calledFunc : knownCallees) {
                 if (calledFunc->isDeclaration()) {
@@ -185,24 +187,25 @@ bool BoundsChecker::isInBounds_internal(llvm::Value* offsetPtr, llvm::APInt offs
                         // common case according to docs. E.g. h264ref 
                         // let's not solve this until we find a benchmark where we need to
                         if (!llvm::isa<llvm::Constant>(call->getArgOperand(1)))
-                            return false;
+                            return IsInBoundsResult::False("call: non-constant load.relative");
                     }
 
                     ASSERT_ELSE_UNKOWN(!calledFunc->isIntrinsic(), calledFunc);
                     ASSERT_ELSE_UNKOWN(!calledFunc->returnDoesNotAlias(), calledFunc);
-                    return false;
+                    return IsInBoundsResult::False("call: unknown external func");
                 }
                 // check if all return values happen to be in bounds, if so we gucci
                 for (auto& bb : *calledFunc) {
                     if (auto retInst = llvm::dyn_cast<llvm::ReturnInst>(bb.getTerminator())) {
                         auto retVal = retInst->getReturnValue();
-                        if (!isInBounds_internal<DIR>(retVal, offset, isInRange))
-                            return false;
+                        auto retInBounds = isInBounds_internal<DIR>(retVal, offset, isInRange);
+                        if (!retInBounds.inBounds)
+                            return retInBounds;
                     }
                 }
             }
 
-            return true;
+            return IsInBoundsResult::True();
         } else if (auto gepInstr = llvm::dyn_cast<llvm::GetElementPtrInst>(current)) {
             if (gepInstr->hasAllConstantIndices()) {
                 for (auto& idxuse : gepInstr->indices())
@@ -218,9 +221,8 @@ bool BoundsChecker::isInBounds_internal(llvm::Value* offsetPtr, llvm::APInt offs
                 // alternative API: scev.getGEPExpr (probably less freaky)
                 bool success = llvm::getIndexExpressionsFromGEP(funcScev, gepInstr, subscripts, sizes);
                 if (!success)
-                    return false;
+                    return IsInBoundsResult::False("GEP: non-constant idx expressions");
                 assert(success);
-                llvm::SmallVector<llvm::Value*> constantIndices;
 
                 ASSERT_ELSE_UNKOWN(subscripts.size() == sizes.size() || subscripts.size() == sizes.size() + 1, gepInstr);
                 ASSERT_ELSE_UNKOWN(subscripts.size() == gepInstr->getNumIndices() || subscripts.size() == gepInstr->getNumIndices() - 1, gepInstr);
@@ -233,6 +235,7 @@ bool BoundsChecker::isInBounds_internal(llvm::Value* offsetPtr, llvm::APInt offs
                     assert(*subscripts.begin() == scev);
                 }
 
+                llvm::SmallVector<llvm::Value*> constantIndices;
                 for (auto scev : subscripts) {
                     // TODO: fix this, not entirely accurate (lower/negative bound might be more dangerous than upper bound)
                     auto limit = getSignedSCEVLimit<DIR>(scev, funcScev);
@@ -254,7 +257,7 @@ bool BoundsChecker::isInBounds_internal(llvm::Value* offsetPtr, llvm::APInt offs
                     continue;
                 } else {
                     assert(constantIndices.size() < subscripts.size());
-                    return false;
+                    return IsInBoundsResult::False("GEP: unanalyzable idx expressions");
                 }
                 assert(false);
             }
@@ -265,148 +268,28 @@ bool BoundsChecker::isInBounds_internal(llvm::Value* offsetPtr, llvm::APInt offs
                 I cannot reproduce it with opt, but however i try to get a memorySSA for that function here, I fail
                 So I am not going to give a shit and use the legacy analysis here
             */
-
             auto& rds = MAM.getResult<ReachingDefinitionsAnalysis>(module);
-            if (auto definingPtr = rds.findDefForLoad(loadInst)) {
+            if (auto definingPtr = rds.findDefForLoad(loadInst)) 
                 return isInBounds_internal<DIR>(definingPtr, offset, isInRange);
-            }
-            return false;
 
-            auto defOrClobberIsInBounds = [this, offset, isInRange] (const llvm::MemDepResult& localDep) -> bool {
-                auto defInst = localDep.getInst();
-                assert(defInst && (localDep.isDef() || localDep.isClobber()));
-
-                llvm::Value* storedVal = nullptr;
-                if (auto storeInst = llvm::dyn_cast<llvm::StoreInst>(defInst)) {
-                    storedVal = storeInst->getValueOperand();
-                } else if (auto cmpxchg = llvm::dyn_cast<llvm::AtomicCmpXchgInst>(defInst)) {
-                    storedVal = cmpxchg->getNewValOperand();
-                } else if (auto atomicrmw = llvm::dyn_cast<llvm::AtomicRMWInst>(defInst)) {
-                    switch (atomicrmw->getOperation()) {
-                        case llvm::AtomicRMWInst::FAdd:
-                        case llvm::AtomicRMWInst::FSub:
-                        case llvm::AtomicRMWInst::Sub:
-                        case llvm::AtomicRMWInst::And:
-                        case llvm::AtomicRMWInst::Nand:
-                        case llvm::AtomicRMWInst::Or:
-                        case llvm::AtomicRMWInst::Xor: {
-                            HANDLE_UNKOWN_VALUE(atomicrmw);
-                        } break;
-                        case llvm::AtomicRMWInst::Add: {
-                            // all of these arithmetic ones represent a computation on the stored value
-                            // + re-storing the value. Essentially, this is a store + valueOperand is 
-                            // arithmetic, encoded into a single instruction
-                            // but since I don't know what the old stored value is, the best I can do is
-                            // a memdepanalysis on the pointeroperand here to figure that out.
-                            // i'm already doing a memdepanalysis on the pointeroperand though
-                            // idk
-                            return false;
-                        } break;
-                        case llvm::AtomicRMWInst::Max:
-                        case llvm::AtomicRMWInst::Min:
-                        case llvm::AtomicRMWInst::UMax:
-                        case llvm::AtomicRMWInst::UMin:
-                        case llvm::AtomicRMWInst::Xchg: {
-                            storedVal = atomicrmw->getValOperand();
-                        } break;
-                        default:
-                            HANDLE_UNKOWN_VALUE(atomicrmw);
-                    }
-                }
-
-                if (storedVal) {
-                    if (module.getDataLayout().getTypeSizeInBits(storedVal->getType()) != 64)
-                        return false;
-                    
-                    auto& pointerDetector = MAM.getResult<PointerDetectionAnalysis>(module);
-                    auto status = pointerDetector.is_unconfirmed_pointer(storedVal);
-                    
-                    // this is definitely not ideal/complete but I can't deal with it anymore right now
-                    if (status.has_value()) {
-                        if (status != PointerDetector::POINTER) {
-                            // 64-bit stores of non-pointers to a potentially clobbering location definitely don't clobber
-                            // However, they may store to an unaligned location and partially clobber the value
-                            // Hence: FIXME
-                            return true;
-                        } else return isInBounds_internal<DIR>(storedVal, offset, isInRange);
-                    } else return false;
-                    assert(false);
-                } else if (auto callInst = llvm::dyn_cast<llvm::CallBase>(defInst)) {
-                    // probably means the defInst is an argument to the call
-                    // easy case: the function does not write that memory at all
-                    // hard case: it does
-                    // to handle this, i should run the memdepanalysis on the called function
-                    // and then figure out what the clobbers are at exit nodes of the function
-                    // not sure if memdepanalysis supports that kind of thing?
-
-                    // a quick and easy fix is to run the function argument attribute inferrer up front
-                    // then check the argument attributes
-                    return false;
-                } else if (llvm::isa<llvm::AllocaInst>(defInst)) {
-                    // would be undefvalue. By using safeinit i could mark these as 
-                    // 0 and then get gains
-                    return false;
-                } else {
-                    HANDLE_UNKOWN_VALUE(defInst);
-                }
-            };
-            
-            auto& memdep = FAM.getResult<llvm::MemoryDependenceAnalysis>(*loadInst->getFunction());
-            auto& domTree = FAM.getResult<llvm::DominatorTreeAnalysis>(*loadInst->getFunction());
-
-            // FIXME: For loadinsts, i should probably look for a localDep in the same basic block/in all blocks it post-dominates?
-            // because memdepanalysis for some reason thinks i give a shit about loads
-            // maybe i should check first if basic blocks can get reported twice though, that would indicate
-            // that memdepanalysis knows whats up
-
-            auto localDep = memdep.getDependency(loadInst);
-            if (!(localDep.isDef() || localDep.isClobber()) || llvm::isa<llvm::LoadInst>(localDep.getInst())) {
-                llvm::SmallVector<llvm::NonLocalDepResult> nonLocalDeps;
-                memdep.getNonLocalPointerDependency(loadInst, nonLocalDeps);
-                if (nonLocalDeps.empty()) {
-                    // from my little investigation, this means that this loads directly from something like an argument, without intervening store
-                    // there may be something to do here similar to callInsts in defOrClobberIsInBounds. but for now frick it
-                    return false;
-                }
-                assert(!nonLocalDeps.empty());
-                bool allInBounds = true;
-                for (auto& nonLocalDep : nonLocalDeps) {
-                    assert(allInBounds);
-                    auto& depresult = nonLocalDep.getResult();
-                    assert(!depresult.isNonLocal());
-
-                    auto defInst = depresult.getInst();
-
-                    if (!defInst) {
-                        // pretty weird case tbh, only nonfunclocal possible?
-                        assert(depresult.isNonFuncLocal() || depresult.isUnknown());
-                        // assert(nonLocalDeps.size() == 1);
-                        allInBounds = false;
-                    } else if (!llvm::isa<llvm::LoadInst>(defInst)) {
-                        allInBounds = defOrClobberIsInBounds(depresult);
-                    } // else (loadinst) do nothing. but it really shouldnt contain a loadinst tbh
-                       
-                    if (!allInBounds)
-                        break;
-                }
-
-                return allInBounds;
-            } else {
-                return defOrClobberIsInBounds(localDep);
-            }
-            assert(false);
+            return IsInBoundsResult::False("load: no definer found");
         } else if (auto extractValue = llvm::dyn_cast<llvm::ExtractValueInst>(current)) {
             auto& rds = MAM.getResult<ReachingDefinitionsAnalysis>(module);
             auto defs = rds.findDefsForExtractValue(extractValue);
             if (defs.empty())
-                return false;
+                return IsInBoundsResult::False("extractval: no definers found");
 
-            for (auto def : defs)
-                if (!isInBounds_internal<DIR>(def, offset, isInRange))
-                    return false;
-            return true;
-        } else if (llvm::isa<llvm::UndefValue, llvm::ExtractElementInst>(current)) {
-            return false;
+            for (auto def : defs) {
+                auto defInBounds = isInBounds_internal<DIR>(def, offset, isInRange);
+                if (!defInBounds.inBounds)
+                    return defInBounds;
+            }
+
+            return IsInBoundsResult::True();
+        } else if (llvm::isa<llvm::UndefValue>(current)) {
+            return IsInBoundsResult::False("undef");
+        } else if (llvm::isa<llvm::ExtractElementInst>(current)) {
+            return IsInBoundsResult::False("extractel: unimplemented");
         } else if (llvm::isa<llvm::BitCastInst>(current)) {
             auto castInst = llvm::cast<llvm::CastInst>(current);
             assert(castInst->getNumOperands() == 1);
@@ -417,7 +300,7 @@ bool BoundsChecker::isInBounds_internal(llvm::Value* offsetPtr, llvm::APInt offs
             // benchmark.ll has the specific case where the result of int_div_int is stored as a "potential clobber"
             ASSERT_ELSE_UNKOWN(dataLayout.getTypeSizeInBits(trunc->getType()) == 64, trunc);
             ASSERT_ELSE_UNKOWN(dataLayout.getTypeSizeInBits(trunc->getOperand(0)->getType()) == 128, trunc);
-            return false;
+            return IsInBoundsResult::False("trunc: weird trunc i128");
         } else if (auto phiNode = llvm::dyn_cast<llvm::PHINode>(current)) {
             if (auto constVal = phiNode->hasConstantValue()) {
                 current = constVal;
@@ -465,18 +348,25 @@ bool BoundsChecker::isInBounds_internal(llvm::Value* offsetPtr, llvm::APInt offs
                 }
 
                 // fallback case
-                bool allInBounds = true;
                 for (auto& incomingVal : phiNode->incoming_values()) {
                     // llvm::outs() << "For phinode '" << *phiNode << "': Now analyzing incoming val: '" << *incomingVal.get() << "'\n";
                     llvm::Value* val = incomingVal.get();
-                    allInBounds = allInBounds && isInBounds_internal<DIR>(val, offset, isInRange);
+                    auto valInBounds = isInBounds_internal<DIR>(val, offset, isInRange);
+                    if (!valInBounds.inBounds)
+                        return valInBounds;
                 }
-                return allInBounds;
+                return IsInBoundsResult::True();
             }
             assert(false);
         } else if (auto selectInst = llvm::dyn_cast<llvm::SelectInst>(current)) {
             // cannot be self-referential AFAIK
-            return isInBounds_internal<DIR>(selectInst->getTrueValue(), offset, isInRange) && isInBounds_internal<DIR>(selectInst->getFalseValue(), offset, isInRange);
+            for (uint i = 1; i < 3; i++) {
+                auto val = selectInst->getOperand(i);
+                auto valInBounds = isInBounds_internal<DIR>(val, offset, isInRange);
+                if (!valInBounds.inBounds)
+                    return valInBounds;
+            }
+            return IsInBoundsResult::True();
         } else if (auto inttoptr = llvm::dyn_cast<llvm::IntToPtrInst>(current)) {
             auto srcEl = inttoptr->getOperand(0);
             assert(dataLayout.getTypeSizeInBits(inttoptr->getType()) == dataLayout.getTypeSizeInBits(srcEl->getType()));
@@ -563,37 +453,34 @@ bool BoundsChecker::isInBounds_internal(llvm::Value* offsetPtr, llvm::APInt offs
                         default: 
                             HANDLE_UNKOWN_VALUE(binaryOp);
                     }
-                } else return false;
+                } else return IsInBoundsResult::False("binop: non-constant offset");
             } else {
                 // we couldn't figure out the binaryOp types. However, at least one of these guys is definitely a pointer
                 // but there is nothing we can do here that we can't do in is_unconfirmed_pointer
                 // this case probably totally includes things like (ptr & getpagesize())
-                return false;
+                return IsInBoundsResult::False("binop: unanalyzable");;
             }
         } else if (auto constExpr = llvm::dyn_cast<llvm::ConstantExpr>(current)) {
             auto oldCurrent = current;
             auto newbase = constExpr->stripAndAccumulateConstantOffsets(dataLayout, offset, true);
             current = newbase;
             if (current == oldCurrent) {
-                switch(constExpr->getOpcode()) {
-                    case llvm::Instruction::IntToPtr: {
-                        auto srcEl = constExpr->getOperand(0);
-                        assert(dataLayout.getTypeSizeInBits(constExpr->getType()) == dataLayout.getTypeSizeInBits(srcEl->getType()));
-                        current = srcEl;
-                    } break;
-                    default:
-                        HANDLE_UNKOWN_VALUE(constExpr);
-                }
+                auto constExprAsInst = constExpr->getAsInstruction();
+                auto result = isInBounds_internal<DIR>(constExprAsInst, offset, isInRange);
+                assert(!boundsCache.count(constExprAsInst));
+                assert(constExprAsInst->getNumUses() == 0);
+                constExprAsInst->deleteValue();
+                return result;
             }
             assert(current != oldCurrent);
         } else if (llvm::isa<llvm::Function>(current)) {
             // W^X and/or XOM will handle this case
             if(offset.sge(-((int64_t)UINT32_MAX)) && offset.sle(UINT32_MAX)) {
-                return true;
+                return IsInBoundsResult::True();
             } else {
                 assert(offset != 0);
                 llvm::outs() << "Offset to function: " << offset << "\n";
-                return false;
+                return IsInBoundsResult::False("func: large offset to code location");
             }
         } else if (auto freeze = llvm::dyn_cast<llvm::FreezeInst>(current)) {
             // if the below fires, i think we can assume it's a safe pointer
