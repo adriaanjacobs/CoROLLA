@@ -66,24 +66,31 @@ bool BoundsChecker::isInBounds(llvm::Value* offsetPtr, llvm::APInt storeSize) {
     // don't add for minimal
     if (ptrInserted || offsetInserted) {
         assert(offsetIt->getSecond() == std::nullopt);
-        // compute upper & lower inbounds
-        auto upperBoundsInfo = isInBounds_internal<UPPER>(offsetPtr, storeSize, isInRange);
-        auto lowerBoundsInfo = isInBounds_internal<LOWER>(offsetPtr, llvm::APInt{64,0}, isInRange);
+        // compute upper & lower inbounds. fail early
+        IsInBoundsResult result;
+        result = isInBounds_internal<UPPER>(offsetPtr, storeSize, isInRange);
+        if (!result.inBounds)
+            goto fail;
+        result = isInBounds_internal<LOWER>(offsetPtr, llvm::APInt{64,0}, isInRange);
+        if (!result.inBounds)
+            goto fail;
         
-        // update the bailstats
-        if (upperBoundsInfo.explanation != "")
-            bailStats[upperBoundsInfo.explanation]++;
-        if (lowerBoundsInfo.explanation != "")
-            bailStats[lowerBoundsInfo.explanation]++;
-
-        // update the cache
-        offsetIt->getSecond() = upperBoundsInfo.inBounds && lowerBoundsInfo.inBounds;
+        // both in bounds!
+        offsetIt->getSecond() = IsInBoundsResult::True();
+        goto past_fail;
+fail:
+        // update bailstats
+        assert(!result.inBounds);
+        offsetIt->getSecond() = result;
+        assert(result.explanation != "");
+        bailStats[result.explanation]++;
     }
+past_fail:
     assert(offsetIt->getSecond().has_value());
-    return offsetIt->getSecond().value();
+    return offsetIt->getSecond().value().inBounds;
 }
 
-std::optional<bool> BoundsChecker::isInCache(llvm::Value* offsetPtr, llvm::APInt offset) const {
+std::optional<BoundsChecker::IsInBoundsResult> BoundsChecker::isInCache(llvm::Value* offsetPtr, llvm::APInt offset) const {
     auto ptrIt = boundsCache.find(offsetPtr);
     if (ptrIt != boundsCache.end()) {
         auto offsetIt = ptrIt->getSecond().find(offset);
@@ -143,7 +150,7 @@ BoundsChecker::IsInBoundsResult BoundsChecker::isInBounds_internal(llvm::Value* 
 
         if (checkTheCache)
             if (auto val = isInCache(current, offset))
-                return {val.value(), ""};
+                return val.value();
 
         if (auto retVal = isInRange(current, offset, DIR)) {
             assert(retVal.has_value());

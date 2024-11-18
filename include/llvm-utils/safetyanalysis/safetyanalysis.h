@@ -43,9 +43,9 @@ public:
         };
         template<DIRECTION DIR>
         IsInBoundsResult isInBounds_internal(llvm::Value* offsetPtr, llvm::APInt storeSize, const std::function<std::optional<bool>(llvm::Value*, llvm::APInt, DIRECTION)>& isInRange, bool checkTheCache = true);
-        std::optional<bool> isInCache(llvm::Value* offsetPtr, llvm::APInt offset) const;
+        std::optional<IsInBoundsResult> isInCache(llvm::Value* offsetPtr, llvm::APInt offset) const;
 
-        llvm::DenseMap<llvm::Value*, llvm::DenseMap<llvm::APInt, std::optional<bool>>> boundsCache;
+        llvm::DenseMap<llvm::Value*, llvm::DenseMap<llvm::APInt, std::optional<IsInBoundsResult>>> boundsCache;
         llvm::DenseMap<llvm::StringRef, size_t> bailStats;
         llvm::Module& module;
         llvm::ModuleAnalysisManager& MAM;
