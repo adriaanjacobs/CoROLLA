@@ -205,7 +205,9 @@ const decltype(builtinLibcCallToBounds) builtinLibcCallToBounds {
     {"fopen", [] (llvm::Module& module, llvm::ModuleAnalysisManager& MAM, llvm::CallBase* callInst) -> std::pair<llvm::APInt, llvm::APInt> {
         return boundsOfReturnedPointeeType(callInst);
     }},
-    {"fopen64", nullptr},
+    {"fopen64", [] (llvm::Module& module, llvm::ModuleAnalysisManager& MAM, llvm::CallBase* callInst) -> std::pair<llvm::APInt, llvm::APInt> {
+        return boundsOfReturnedPointeeType(callInst);
+    }},
     {"fopencookie", nullptr},
     {"\01readdir64", nullptr},
     {"\01tmpfile64", nullptr},
