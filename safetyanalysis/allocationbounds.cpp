@@ -1,3 +1,4 @@
+#include "llvm-utils/pointerdetection/pointerdetection.h"
 #include <llvm-utils/safetyanalysis/allocationbounds.h>
 #include <llvm-utils/util.h>
 
@@ -209,6 +210,9 @@ const decltype(builtinLibcCallToBounds) builtinLibcCallToBounds {
         return boundsOfReturnedPointeeType(callInst);
     }},
     {"fopencookie", nullptr},
+    {"popen", [] (llvm::Module& module, llvm::ModuleAnalysisManager& MAM, llvm::CallBase* callInst) -> std::pair<llvm::APInt, llvm::APInt> {
+        return boundsOfReturnedPointeeType(callInst);
+    }},
     {"\01readdir64", nullptr},
     {"\01tmpfile64", nullptr},
     {"tmpfile", [] (llvm::Module& module, llvm::ModuleAnalysisManager& MAM, llvm::CallBase* callInst) -> std::pair<llvm::APInt, llvm::APInt> {
@@ -291,7 +295,6 @@ const decltype(builtinLibcCallToBounds) builtinLibcCallToBounds {
     {"permalloc", nullptr},
     {"png_create_info_struct", nullptr},
     {"png_create_write_struct", nullptr},
-    {"popen", nullptr},
     {"pthread_getspecific", nullptr},
     {"readdir", [] (llvm::Module& module, llvm::ModuleAnalysisManager& MAM, llvm::CallBase* callInst) -> std::pair<llvm::APInt, llvm::APInt> {
         // https://man7.org/linux/man-pages/man3/readdir.3.html
@@ -348,7 +351,6 @@ const decltype(builtinLibcCallToBounds) builtinLibcCallToBounds {
     {"XListFonts", nullptr},
     {"XSetLocaleModifiers", nullptr},
     {"XcursorGetTheme", nullptr},
-    {"__strdup", nullptr},
     {"crypt", nullptr},
     {"ctime", [] (llvm::Module& module, llvm::ModuleAnalysisManager& MAM, llvm::CallBase* call) -> std::pair<llvm::APInt, llvm::APInt> {
         auto len = strlen("Wed Jun 30 21:49:08 1993\n");
@@ -374,9 +376,22 @@ const decltype(builtinLibcCallToBounds) builtinLibcCallToBounds {
         return boundsOfReturnedPointeeType(callInst);
     }},
     {"sbrk", nullptr},
-    {"strdup", nullptr},
+    {"__strdup", nullptr},
+    {"strdup", [] (llvm::Module& module, llvm::ModuleAnalysisManager& MAM, llvm::CallBase* call) -> std::pair<llvm::APInt, llvm::APInt> {
+        // see if the operand is a constant. if so, figure out the length of it
+        auto& pointerInfo = MAM.getResult<PointerDetectionAnalysis>(module);
+        auto strippedPtr = pointerInfo.strip_pointer_casts(call->getArgOperand(0));
+        if (auto constant = llvm::dyn_cast<llvm::Constant>(call->getArgOperand(0))) {
+            HANDLE_UNKOWN_VALUE(constant); // extract the string from here (only if it's constant??)
+        }
+        // heap-allocated, so at least 16 bytes. i guess
+        return {llvm::APInt{64, 0}, llvm::APInt{64, 16}};
+    }},
     {"strerror", [] (llvm::Module& module, llvm::ModuleAnalysisManager& MAM, llvm::CallBase* call) -> std::pair<llvm::APInt, llvm::APInt> {
-        if (auto constInt = llvm::dyn_cast<llvm::ConstantInt>(call->getArgOperand(0)))
+        // see if the operand is a constant. if so, figure out the length of it
+        auto& pointerInfo = MAM.getResult<PointerDetectionAnalysis>(module);
+        auto strippedPtr = pointerInfo.strip_pointer_casts(call->getArgOperand(0));
+        if (auto constInt = llvm::dyn_cast<llvm::ConstantInt>(strippedPtr))
             return {llvm::APInt{64, 0}, llvm::APInt{64, strlen(strerror(constInt->getLimitedValue()))}};
         // shortest error string
         return {llvm::APInt{64, 0}, llvm::APInt{64, strlen("I/O error")}};
