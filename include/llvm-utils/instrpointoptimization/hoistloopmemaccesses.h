@@ -11,6 +11,7 @@ struct InstrumentationPoint {
     llvm::Instruction* insertBefore;
     llvm::Value* pointerOperand;
     llvm::Value* endOfAddressRange = pointerOperand;
+    bool unsoundlyHoisted = false;
 
     InstrumentationPoint(llvm::Instruction* insertBefore, llvm::Value* pointerOperand) : 
         insertBefore{insertBefore}, pointerOperand{pointerOperand}
@@ -35,7 +36,7 @@ public:
     LoopHoister(llvm::Module& M, llvm::ModuleAnalysisManager& MAM);
 
     // Maximally hoist logs in loops into preheaders
-    void hoistLoopBoundMemAccesses(llvm::DenseMap<llvm::Function*, llvm::DenseMap<llvm::Use*, InstrumentationPoint*>>& funcToInstPoints);
+    void hoistLoopBoundMemAccesses(llvm::DenseMap<llvm::Function*, llvm::DenseMap<llvm::Use*, InstrumentationPoint*>>& funcToInstPoints, bool permitNonMustExecute = false);
 };
 
 

@@ -52,11 +52,12 @@ llvm::Value* LoopHoister::tryExpandSCEV(const llvm::SCEV* scevVal, llvm::Type* e
     } else HANDLE_UNKOWN_SCEV(scevVal);
 }
 
-void LoopHoister::hoistLoopBoundMemAccesses(llvm::DenseMap<llvm::Function*, llvm::DenseMap<llvm::Use*, InstrumentationPoint*>>& funcToInstPoints) {
+void LoopHoister::hoistLoopBoundMemAccesses(llvm::DenseMap<llvm::Function*, llvm::DenseMap<llvm::Use*, InstrumentationPoint*>>& funcToInstPoints, bool permitNonMustExecute) {
     auto& context = module.getContext();
 
     size_t pointsInLoops = 0;
-    size_t hoistedPoints = 0;
+    size_t hoistedLIPoints = 0;
+    size_t unsoundlyHoistedPoints = 0;
     size_t noMustExecuteLoopInvariant = 0;
 
     size_t cantComputeBackEdgeCount = 0;
@@ -294,10 +295,14 @@ void LoopHoister::hoistLoopBoundMemAccesses(llvm::DenseMap<llvm::Function*, llvm
                     assert(!point->isRangeCheck()); // should not get here
                     if (loop->makeLoopInvariant(point->pointerOperand, changed)) {
                         assert(!changed);
-                        if (hoistable) {
+                        if (permitNonMustExecute || hoistable) {
                             assert(domTree.dominates(point->pointerOperand, preheader->getTerminator()));
                             point->insertBefore = preheader->getTerminator();
-                            hoistedPoints += !i;
+                            // record any "forced" hoisting in case the instrumentation wants to treat it differently 
+                            if (!point->unsoundlyHoisted) 
+                                point->unsoundlyHoisted = !hoistable;
+                            hoistedLIPoints += !i;
+                            unsoundlyHoistedPoints += !i && !hoistable;
                             change = true;
                         } else noMustExecuteLoopInvariant += !i;
                     } else {
@@ -413,9 +418,10 @@ void LoopHoister::hoistLoopBoundMemAccesses(llvm::DenseMap<llvm::Function*, llvm
 #endif
 
     llvm::outs() << pointsInLoops << " points in loops:\n";
-    llvm::outs() << "\t"<< (hoistedPoints + noMustExecuteLoopInvariant) << "/" << pointsInLoops << " are loop invariant.\n";
-        llvm::outs() << "\t\t" << hoistedPoints << "/" << (hoistedPoints + noMustExecuteLoopInvariant) << " hoisted to preheader.\n";
-        llvm::outs() << "\t\t" << noMustExecuteLoopInvariant << "/" << (hoistedPoints + noMustExecuteLoopInvariant) << " are not guaranteed to execute.\n";
+    llvm::outs() << "\t"<< (hoistedLIPoints + noMustExecuteLoopInvariant) << "/" << pointsInLoops << " are loop invariant.\n";
+        llvm::outs() << "\t\t" << hoistedLIPoints << "/" << (hoistedLIPoints + noMustExecuteLoopInvariant) << " hoisted to preheader "
+                    << "(" << unsoundlyHoistedPoints << " unsoundly).\n";
+        llvm::outs() << "\t\t" << noMustExecuteLoopInvariant << "/" << (hoistedLIPoints + noMustExecuteLoopInvariant) << " are not guaranteed to execute.\n";
     llvm::outs() << "\t" << operandDependsOnIV << "/" << pointsInLoops << " depend on the IV.\n";
         llvm::outs() << "\t\t" << cantComputeBackEdgeCount << "/" << operandDependsOnIV << " have no computable backEdgeTakenCount\n";
         llvm::outs() << "\t\t" << "We can compute " << (operandDependsOnIV - cantComputeBackEdgeCount) << "/" << operandDependsOnIV << " backEdgeTakenCounts.\n";
