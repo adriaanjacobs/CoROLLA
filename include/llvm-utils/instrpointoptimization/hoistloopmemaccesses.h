@@ -20,6 +20,13 @@ struct InstrumentationPoint {
     bool isRangeCheck() const {
         return pointerOperand != endOfAddressRange;
     }
+
+    void print() {
+        llvm::errs() << "ptr: " << *pointerOperand << "\n";
+        if (endOfAddressRange != pointerOperand)
+            llvm::errs() << "end: " << *endOfAddressRange << "\n";
+        llvm::errs() << "insertbefore: " << *insertBefore << "\n";
+    }
 };
 
 class LoopHoister {
@@ -31,6 +38,9 @@ class LoopHoister {
     llvm::SCEVExpander& getOrCreateSCEVExpander(llvm::Function* func, llvm::ScalarEvolution& SCEV);
 
     llvm::Value* tryExpandSCEV(const llvm::SCEV* scev, llvm::Type* expandedTy, llvm::Instruction* insertBefore);
+
+    llvm::Use* findLoopInvariantPointerBaseUse(llvm::Loop* loop, llvm::Value* pointerOperand);
+    llvm::Value* computeICMP(llvm::ICmpInst::Predicate pred, llvm::Value* lhs, llvm::Value* rhs, llvm::Instruction* insertBefore);
 
 public:
     LoopHoister(llvm::Module& M, llvm::ModuleAnalysisManager& MAM);

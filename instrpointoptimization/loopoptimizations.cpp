@@ -52,6 +52,47 @@ llvm::Value* LoopHoister::tryExpandSCEV(const llvm::SCEV* scevVal, llvm::Type* e
     } else HANDLE_UNKOWN_SCEV(scevVal);
 }
 
+// we use this to determine a suitable useToReplace for range checks
+//  this function therefore heavily assumes that the pointerOperand is an addrec for loop
+llvm::Use* LoopHoister::findLoopInvariantPointerBaseUse(llvm::Loop* loop, llvm::Value* pointerOperand) {
+    auto isInLoop = [&] (llvm::Value* val) -> bool {
+        auto inst = llvm::dyn_cast<llvm::Instruction>(val);
+        return inst && loop->contains(inst);
+    };
+
+    // find the use that feeds this pointerBase into the loop recurrence
+    auto current = llvm::cast<llvm::Instruction>(pointerOperand);
+    while (true) {
+        // go through operations until we find a loop-bound instruction that introduces this pointerBase
+        ASSERT_ELSE_UNKOWN(loop->contains(current), current);
+        if (auto gep = llvm::dyn_cast<llvm::GetElementPtrInst>(current)) {
+            if (!isInLoop(gep->getPointerOperand()))
+                return &gep->getOperandUse(gep->getPointerOperandIndex());
+            current = llvm::cast<llvm::Instruction>(gep->getPointerOperand());
+        } else if (auto phi = llvm::dyn_cast<llvm::PHINode>(current)) {
+            llvm::DenseSet<llvm::Use*> uses;
+            for (auto& incomingUse : phi->incoming_values())
+                if (!isInLoop(incomingUse.get()))
+                    uses.insert(&incomingUse);
+            // if >1: is the loop canonical? i expect only a single incoming edge from outside
+            // if 0: how could it be an addrec if the pointer is dependent on multiple phis?
+            ASSERT_ELSE_UNKOWN(uses.size() == 1, phi);
+            return *uses.begin();
+        } else if (auto bitcast = llvm::dyn_cast<llvm::BitCastInst>(current)) {
+            current = llvm::cast<llvm::Instruction>(bitcast->getOperand(0));
+        } else HANDLE_UNKOWN_VALUE(current);
+    }
+}
+
+llvm::Value* LoopHoister::computeICMP(llvm::ICmpInst::Predicate pred, llvm::Value* lhs, llvm::Value* rhs, llvm::Instruction* insertBefore) {
+    auto int8PtrTy = llvm::Type::getInt8PtrTy(insertBefore->getContext());
+    lhs = createBitOrPointerCastIfNecessary(lhs, int8PtrTy, "", insertBefore);
+    rhs = createBitOrPointerCastIfNecessary(rhs, int8PtrTy, "", insertBefore);
+    auto cmp = new llvm::ICmpInst(insertBefore, pred, lhs, rhs);
+    auto select = llvm::SelectInst::Create(cmp, lhs, rhs, "", insertBefore);
+    return select;
+}
+
 void LoopHoister::hoistLoopBoundMemAccesses(llvm::DenseMap<llvm::Function*, llvm::DenseMap<llvm::Use*, InstrumentationPoint*>>& funcToInstPoints, bool permitNonMustExecute) {
     auto& context = module.getContext();
 
@@ -82,6 +123,8 @@ void LoopHoister::hoistLoopBoundMemAccesses(llvm::DenseMap<llvm::Function*, llvm
         for (auto& bb : *func) 
             if (llvm::isa<llvm::UnreachableInst, llvm::ReturnInst>(bb.getTerminator()))
                 funcTerminators.insert(bb.getTerminator());
+
+        llvm::DenseMap<llvm::Use*, InstrumentationPoint*> surrogateUseToPoint;
 
         do {
             change = false;
@@ -264,7 +307,8 @@ void LoopHoister::hoistLoopBoundMemAccesses(llvm::DenseMap<llvm::Function*, llvm
 
             // then, we do the more classic summarization and IV-independent hoisting
             llvm::DenseSet<InstrumentationPoint*> ivIndependentPoints;
-            for (auto& [point, _] : pointToUses) {
+            llvm::DenseSet<InstrumentationPoint*> toErase;
+            for (auto& [point, pointUses] : pointToUses) {
                 // both pointer operands would need to satisfy the conditions for hoisting
                 //  that's currently not implemented, so we skip the rangechecks here
                 if (point->isRangeCheck()) 
@@ -334,8 +378,9 @@ void LoopHoister::hoistLoopBoundMemAccesses(llvm::DenseMap<llvm::Function*, llvm
                                     }
 
                                     // now, lowerScev < upperScev
-                                    auto lowerVal = tryExpandSCEV(lowerScev, llvm::Type::getInt8PtrTy(context, llvm::cast<llvm::PointerType>(point->pointerOperand->getType())->getAddressSpace()), preheader->getTerminator());
-                                    auto upperVal = tryExpandSCEV(upperScev, llvm::Type::getInt8PtrTy(context, llvm::cast<llvm::PointerType>(point->pointerOperand->getType())->getAddressSpace()), preheader->getTerminator());
+                                    auto pointerType = llvm::Type::getInt8PtrTy(context, llvm::cast<llvm::PointerType>(point->pointerOperand->getType())->getAddressSpace());
+                                    auto lowerVal = tryExpandSCEV(lowerScev, pointerType, preheader->getTerminator());
+                                    auto upperVal = tryExpandSCEV(upperScev, pointerType, preheader->getTerminator());
 
                                     if (lowerVal && upperVal) {
                                         exitValueComputed += !i;
@@ -351,12 +396,42 @@ void LoopHoister::hoistLoopBoundMemAccesses(llvm::DenseMap<llvm::Function*, llvm
                                             llvm::outs() << "lowerVal == upperVal: " << *lowerVal << "\n";
                                             ASSERT_ELSE_UNKOWN(lowerVal != upperVal, lowerVal);
                                         }
-                                        
-                                        // update the point with the lower & higher information
-                                        assert(!point->isRangeCheck());
-                                        point->insertBefore = preheader->getTerminator();
-                                        point->pointerOperand = lowerVal;
-                                        point->endOfAddressRange = upperVal;
+
+                                        // find the new useToReplace
+                                        auto surrogateUse = findLoopInvariantPointerBaseUse(loop, point->pointerOperand);
+                                        assert(!pointUses.contains(surrogateUse));
+
+                                        if (auto surrogatePointIt = surrogateUseToPoint.find(surrogateUse); surrogatePointIt != surrogateUseToPoint.end()) {
+                                            auto surrogatePoint = surrogatePointIt->getSecond();
+                                            // this surrogateUse is already described by a previous point. 
+                                            //  Naturally, this previous point describes the same memory accesses as this one
+                                            //  find out the min,max bounds of both of them and update this point to range-check both of them at once
+                                            auto combinedLower = computeICMP(llvm::ICmpInst::ICMP_ULT, surrogatePoint->pointerOperand, lowerVal, preheader->getTerminator());
+                                            auto combinedUpper = computeICMP(llvm::ICmpInst::ICMP_UGT, surrogatePoint->endOfAddressRange, upperVal, preheader->getTerminator());
+                                            surrogatePoint->pointerOperand = combinedLower;
+                                            surrogatePoint->endOfAddressRange = combinedUpper;
+                                            // delete the point we just replaced
+                                            toErase.insert(point);
+                                        } else {
+                                            // this is the first point for this surrogateuse
+                                            // replace all loop uses for this point with the surrogateuse
+                                            llvm::DenseSet<llvm::Use*> toErase;
+                                            for (auto& use : pointUses)
+                                                if (auto inst = llvm::dyn_cast<llvm::Instruction>(use->getUser()); inst && loop->contains(inst))
+                                                    toErase.insert(use);
+                                            for (auto use : toErase)
+                                                pointUses.erase(use);
+                                            assert(pointUses.empty()); // i can't imagine there are non-loop-bound uses for this pointerOperand??
+                                            pointUses.insert(surrogateUse);
+
+                                            auto dbg = surrogateUseToPoint.try_emplace(surrogateUse, point).second;
+                                            assert(dbg);
+                                            // update the point with the lower & higher range bounds
+                                            assert(!point->isRangeCheck());
+                                            point->insertBefore = preheader->getTerminator();
+                                            point->pointerOperand = lowerVal;
+                                            point->endOfAddressRange = upperVal;
+                                        }
 
                                         change = true;
                                     } else {
@@ -387,6 +462,9 @@ void LoopHoister::hoistLoopBoundMemAccesses(llvm::DenseMap<llvm::Function*, llvm
                 }
             }
 
+            for (auto point : toErase)
+                pointToUses.erase(point);
+
             i++;
         } while (change);
 
@@ -394,6 +472,15 @@ void LoopHoister::hoistLoopBoundMemAccesses(llvm::DenseMap<llvm::Function*, llvm
         useToPoint.clear();
         for (auto& [point, uses] : pointToUses)
             for (auto use : uses) {
+                if (useToPoint.count(use)) {
+                    llvm::errs() << "use already described by another point!\n";
+                    llvm::errs() << "use: operand " << use->getOperandNo() << " of " << *use->getUser() << "\n";
+                    llvm::errs() << "existing point:\n";
+                    useToPoint.find(use)->getSecond()->print();
+                    llvm::errs() << "new point:\n";
+                    point->print();
+                    HANDLE_UNKOWN_VALUE(use->getUser());
+                }
                 ASSERT_ELSE_UNKOWN(!useToPoint.count(use), use->getUser());
                 useToPoint[use] = point;
             }
