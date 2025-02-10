@@ -401,10 +401,7 @@ void PointerDetector::mark_pointer_origins(llvm::Value* pointer) {
         llvm::SmallVector<std::pair<llvm::Value*, ValueType>> toMark;
         auto oldCurrent = current;
         ASSERT_ELSE_UNKOWN(is_confirmed_pointer(current), current);
-        if (auto gepInst = llvm::dyn_cast<llvm::GetElementPtrInst>(current)) {
-            current = gepInst->getPointerOperand();
-            toMark.push_back({current, POINTER});
-        } else if (auto gepOperator = llvm::dyn_cast<llvm::GEPOperator>(current)) {
+        if (auto gepOperator = llvm::dyn_cast<llvm::GEPOperator>(current)) {
             current = gepOperator->getPointerOperand();
             toMark.push_back({current, POINTER});
         } else if (auto castInst = llvm::dyn_cast<llvm::CastInst>(current)) {

@@ -11,31 +11,33 @@ RDSInfo::RDSInfo(llvm::Module& module, llvm::ModuleAnalysisManager& MAM) :
 {}
 
 llvm::Value* RDSInfo::findDefForLoad(llvm::LoadInst* load, PointerDetector* pointerDetector) {
-    ASSERT_ELSE_UNKOWN(load->getModule()->getDataLayout().getTypeSizeInBits(load->getType()) == 64, load);
+    auto& dataLayout = load->getModule()->getDataLayout();
+    ASSERT_ELSE_UNKOWN(dataLayout.getTypeSizeInBits(load->getType()) == 64, load);
 
     if (!pointerDetector)
         pointerDetector = MAM.getCachedResult<PointerDetectionAnalysis>(module);
     assert(pointerDetector);
 
-    // a makeshift quick and dirty intra-block definition analysis for this load, catches really trivial cases
+    // a makeshift quick and dirty intra-block definition analysis for this load, catches really trivial cases, especially on load/stores through globals
     auto stripPtrOperand = pointerDetector->strip_pointer_casts(load->getPointerOperand());
     llvm::Instruction* potDef = load;
     while ((potDef = potDef->getPrevNode())) {
         auto& aamanager = getFAM(module, MAM).getResult<llvm::AAManager>(*load->getFunction());
         if (auto storeInst = llvm::dyn_cast<llvm::StoreInst>(potDef)) {
-            if (pointerDetector->strip_pointer_casts(storeInst->getPointerOperand()) == stripPtrOperand) {
-                // as crazy as it looks, it actually happens in real code
-                return storeInst->getValueOperand();                
-            } else {
-                // i want to use these alias analyses: BasicAA, GlobalsAA, CFLSteensAA
-                auto aliasResult = aamanager.alias(storeInst->getPointerOperand(), load->getPointerOperand());
-                // our strip_pointer_casts should really catch these mustAliases
-                ASSERT_ELSE_UNKOWN(aliasResult != llvm::AliasResult::MustAlias, storeInst);
-                bool couldAlias = aliasResult; // true if there is a possibility of aliasing (must, may & partial)
-                if (couldAlias) // bail out if it can alias. better option is to push them back into an RDS
-                    return nullptr;
-                // else continue the analysis
+            if (pointerDetector->strip_pointer_casts(storeInst->getPointerOperand()) == stripPtrOperand) { // as crazy as it looks, it actually happens in real code
+                if (dataLayout.getTypeSizeInBits(storeInst->getValueOperand()->getType()) == 64) // otherwise this is a partial overwrite (<64) or an unanalyzable store of an aggregate (>64)
+                    return storeInst->getValueOperand();
+                else return nullptr;
             }
+            
+            // i want to use these alias analyses: BasicAA, GlobalsAA, CFLSteensAA
+            auto aliasResult = aamanager.alias(storeInst->getPointerOperand(), load->getPointerOperand());
+            // our strip_pointer_casts should really catch these mustAliases
+            ASSERT_ELSE_UNKOWN(aliasResult != llvm::AliasResult::MustAlias, storeInst);
+            bool couldAlias = aliasResult; // true if there is a possibility of aliasing (must, may & partial)
+            if (couldAlias) // bail out if it can alias. better option is to push them back into an RDS
+                return nullptr;
+            // else continue the analysis
         } else if (auto callInst = llvm::dyn_cast<llvm::CallBase>(potDef)) {
             if (!aamanager.onlyReadsMemory(callInst)) // may def
                 return nullptr;
