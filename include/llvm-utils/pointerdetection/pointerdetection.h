@@ -36,11 +36,12 @@ public:
 struct PointerDetector {
     llvm::DenseSet<llvm::Value*> pointers;
     llvm::DenseSet<llvm::Value*> negatedPointers;
+    llvm::DenseSet<llvm::Value*> doublePointers;
     // mutable because stupid me marked the PointerDetector as const everywhere 
     //  and i guess caches are kinda the only valid use case for mutable ??
     mutable llvm::DenseMap<llvm::Value*, std::pair<llvm::Value*, bool>> pointerToRealBase;
 
-    enum ValueType { NEGATED_POINTER = -1, INTEGER = 0, POINTER = 1 };
+    enum ValueType { NEGATED_POINTER = -1, INTEGER = 0, POINTER = 1, DOUBLE_POINTER = 2 };
 
     bool is_confirmed_pointer(llvm::Value* val) const { return pointers.contains(val); }
     std::optional<ValueType> is_unconfirmed_pointer(llvm::Value* val) const;

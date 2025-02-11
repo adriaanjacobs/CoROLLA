@@ -281,6 +281,7 @@ void PointerDetector::mark_value(llvm::Value* val, ValueType status) {
         } break;
         case INTEGER: { /* nothing for now */ } break;
         case NEGATED_POINTER: { negatedPointers.insert(val); } break;
+        case DOUBLE_POINTER:  { doublePointers.insert(val); } break;
         default: assert(false);
     }
 }
@@ -360,7 +361,7 @@ void PointerDetector::mark_pointer_uses(llvm::Value* pointer) {
                 auto pointerOperandStatus = is_unconfirmed_pointer(gep->getPointerOperand());
                 if (pointerOperandStatus.has_value()) {
                     if (*pointerOperandStatus == POINTER)
-                        HANDLE_UNKOWN_VALUE(gep);
+                        mark_value(gep, DOUBLE_POINTER);    // SPEC17 gcc triggers this
                     else if (*pointerOperandStatus == INTEGER)
                         mark_value(gep, POINTER); // risky click
                     else
@@ -613,6 +614,8 @@ std::optional<llvm::Value*> PointerDetector::mark_binaryOp_origins(T* binaryOp, 
             assert(lhStatus.has_value() || rhStatus.has_value());
             if ((!rhStatus.has_value() || rhStatus == INTEGER)) {
                 ASSERT_ELSE_UNKOWN(llvm::isa<llvm::ConstantInt>(rhs) && llvm::cast<llvm::ConstantInt>(rhs)->getValue() == -1, binaryOp);
+                if (lhStatus.has_value())
+                    ASSERT_ELSE_UNKOWN(*lhStatus == POINTER, binaryOp);
                 toMark.push_back({lhs, NEGATED_POINTER});
                 toMark.push_back({rhs, INTEGER});
                 done = true;
@@ -649,6 +652,10 @@ std::optional<PointerDetector::ValueType> PointerDetector::handle_unconfirmed_bi
 
     if (!lhs.has_value() || !rhs.has_value())
         return std::nullopt;
+
+    // i havent seen these occur in binaryops
+    if (*lhs == DOUBLE_POINTER || *rhs == DOUBLE_POINTER)
+        HANDLE_UNKOWN_VALUE(binaryOp);
 
     switch (binaryOp->getOpcode()) {
         case llvm::BinaryOperator::SDiv: {
@@ -705,6 +712,7 @@ std::optional<PointerDetector::ValueType> PointerDetector::handle_unconfirmed_bi
             // neg_ptr | neg_ptr = INVALID
             if (lhs.has_value() && rhs.has_value()) {
                 assert(lhs != NEGATED_POINTER && rhs.value() != NEGATED_POINTER);
+                assert(lhs != DOUBLE_POINTER && rhs.value() != DOUBLE_POINTER);
 
                 if ((lhs == POINTER && rhs == INTEGER) || (rhs == POINTER && lhs == INTEGER)) {
                     return POINTER;
@@ -727,6 +735,7 @@ std::optional<PointerDetector::ValueType> PointerDetector::handle_unconfirmed_bi
             // neg_ptr & neg_ptr = INVALID
             if (lhs.has_value() && rhs.has_value()) {
                 assert(lhs != NEGATED_POINTER && rhs.value() != NEGATED_POINTER);
+                assert(lhs != DOUBLE_POINTER && rhs.value() != DOUBLE_POINTER);
 
                 if ((lhs == POINTER && rhs == INTEGER) || (rhs == POINTER && lhs == INTEGER)) {
                     auto mask = binaryOp->getOperand(rhs == INTEGER);
@@ -806,6 +815,7 @@ std::optional<PointerDetector::ValueType> PointerDetector::handle_unconfirmed_bi
             // neg_ptr * neg_ptr = INVALID
 
             assert(lhs.has_value() && rhs.has_value());
+            assert(lhs != DOUBLE_POINTER && rhs.value() != DOUBLE_POINTER);
 
             if (lhs == POINTER || lhs == NEGATED_POINTER) {
                 ASSERT_ELSE_UNKOWN(rhs == INTEGER, binaryOp);
@@ -907,6 +917,9 @@ std::optional<PointerDetector::ValueType> PointerDetector::is_unconfirmed_pointe
                 if (!llvm::is_contained(passedInstrs, incomingVal)) {
                     auto pointerStatus = is_unconfirmed_pointer(incomingVal);
                     if (pointerStatus.has_value()) {
+                        // gonna have to rewrite this bit if this occurs
+                        //  maybe for the best
+                        ASSERT_ELSE_UNKOWN(*pointerStatus != DOUBLE_POINTER, incomingVal); 
                         if (ret.has_value()) {
                             if (pointerStatus == INTEGER && llvm::isa<llvm::Constant>(incomingVal) && ret == POINTER) {
                                 // upgrade constant integers if they coincide with pointers

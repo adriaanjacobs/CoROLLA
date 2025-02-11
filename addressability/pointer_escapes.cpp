@@ -44,11 +44,17 @@ void collectIntraProceduralPtrEscapes(llvm::Value* ptr, llvm::DenseSet<llvm::Use
         } else if (auto binaryOp = llvm::dyn_cast<llvm::BinaryOperator>(user)) {
             auto pointerStatus = pointerInfo.handle_unconfirmed_binaryOp(binaryOp);
             using enum PointerDetector::ValueType;
-            if (!pointerStatus.has_value() || *pointerStatus == NEGATED_POINTER)
-                ptrEscapes.insert(&ptrUse); // some opaque thing we don't understand
-            else if (*pointerStatus == POINTER)
-                collectIntraProceduralPtrEscapes(binaryOp, ptrEscapes, pointerInfo);
-            // else INTEGER -> this is an offset, don't have to arithcheck it here
+            auto value = pointerStatus.has_value() ? *pointerStatus : NEGATED_POINTER;
+            switch (value) {
+                case NEGATED_POINTER:
+                case DOUBLE_POINTER:    // some opaque thing we don't understand
+                    ptrEscapes.insert(&ptrUse);
+                    [[fallthrough]];
+                case INTEGER:           // -> this is an offset, don't have to arithcheck it here
+                    break;
+                case POINTER:
+                    collectIntraProceduralPtrEscapes(binaryOp, ptrEscapes, pointerInfo);
+            }
         } else if (auto icmp = llvm::dyn_cast<llvm::ICmpInst>(user)) {
             // ignore -> if these comparisons are with OOB pointers, it's likely the end iterator
             //  those will not be considered confirmed pointers since they are not dereferences
