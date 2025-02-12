@@ -227,7 +227,9 @@ const decltype(builtinLibcCallToBounds) builtinLibcCallToBounds {
     {"tmpfile", [] (llvm::Module& module, llvm::ModuleAnalysisManager& MAM, llvm::CallBase* callInst) -> std::pair<llvm::APInt, llvm::APInt> {
         return boundsOfReturnedPointeeType(callInst);
     }},
-    {"tmpfile64", nullptr},
+    {"tmpfile64", [] (llvm::Module& module, llvm::ModuleAnalysisManager& MAM, llvm::CallBase* callInst) -> std::pair<llvm::APInt, llvm::APInt> {
+        return boundsOfReturnedPointeeType(callInst);
+    }},
     {"BIO_new_socket", nullptr},
     {"FT_Get_Sfnt_Table", nullptr},
     {"FcFontList", nullptr},
