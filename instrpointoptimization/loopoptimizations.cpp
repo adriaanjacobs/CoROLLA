@@ -335,10 +335,8 @@ void LoopHoister::hoistLoopBoundMemAccesses(llvm::DenseMap<llvm::Function*, llvm
                         }
                     }
 
-                    bool changed = false;
                     assert(!point->isRangeCheck()); // should not get here
-                    if (loop->makeLoopInvariant(point->pointerOperand, changed)) {
-                        assert(!changed);
+                    if (loop->isLoopInvariant(point->pointerOperand)) {
                         if (permitNonMustExecute || hoistable) {
                             assert(domTree.dominates(point->pointerOperand, preheader->getTerminator()));
                             point->insertBefore = preheader->getTerminator();
