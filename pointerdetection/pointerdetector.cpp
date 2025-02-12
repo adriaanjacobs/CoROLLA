@@ -55,7 +55,9 @@ void PointerDetector::identify_start_pointers(llvm::Module& module) {
                 if (auto callInst = llvm::dyn_cast<llvm::CallBase>(&inst)) {
                     for (uint i = 0; i < callInst->arg_size(); i++) {
                         if (callInst->paramHasAttr(i, llvm::Attribute::Dereferenceable)) {
-                            mark_value(callInst->getArgOperand(i), POINTER);
+                            auto argDef = callInst->getArgOperand(i);
+                            if (postDominates(callInst, argDef))
+                                mark_value(argDef, POINTER);
                         }
                     }
                 }
@@ -84,6 +86,8 @@ void PointerDetector::identify_start_pointers(llvm::Module& module) {
                 if (pointerOperand) {
                     // only mark the pointerOperand definition as a pointer if it is post-dominated by the memory access that makes it so
                     //  otherwise, it could well be a nullptr or some other non-pointer value that isnt actually dereferenced
+                    //  FIXME: we could be better here, by checking whether a use of this pointer that does qualify as a pointer dominates the current use
+                    //      if so, we're in a block of code in which the pointer has been dereferenced -> definitely a pointer
                     if (postDominates(&inst, pointerOperand)) {
                         mark_value(pointerOperand, POINTER);
                     }
