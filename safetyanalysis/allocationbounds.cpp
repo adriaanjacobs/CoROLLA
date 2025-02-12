@@ -146,7 +146,16 @@ const decltype(builtinLibcCallToBounds) builtinLibcCallToBounds {
     {"XKeysymToString", nullptr},
     {"__h_errno_location", nullptr},
     {"__res_state", nullptr},
-    {"asctime", nullptr},
+    {"asctime", [] (llvm::Module& module, llvm::ModuleAnalysisManager& MAM, llvm::CallBase* call) -> std::pair<llvm::APInt, llvm::APInt> {
+        auto len = strlen("Sun Sep 16 01:03:52 1973\n");
+        assert(len == 25); // this is pretty much defined this way by the spec
+        return {llvm::APInt{64, 0}, llvm::APInt{64, len + 1}};
+    }},
+    {"ctime", [] (llvm::Module& module, llvm::ModuleAnalysisManager& MAM, llvm::CallBase* call) -> std::pair<llvm::APInt, llvm::APInt> {
+        auto len = strlen("Wed Jun 30 21:49:08 1993\n");
+        assert(len == 25); // this is pretty much defined this way by the spec
+        return {llvm::APInt{64, 0}, llvm::APInt{64, len + 1}};
+    }},
     {"bindtextdomain", nullptr},
     {"bind_textdomain_codeset", nullptr},
     {"ctermid", nullptr},
@@ -352,11 +361,6 @@ const decltype(builtinLibcCallToBounds) builtinLibcCallToBounds {
     {"XSetLocaleModifiers", nullptr},
     {"XcursorGetTheme", nullptr},
     {"crypt", nullptr},
-    {"ctime", [] (llvm::Module& module, llvm::ModuleAnalysisManager& MAM, llvm::CallBase* call) -> std::pair<llvm::APInt, llvm::APInt> {
-        auto len = strlen("Wed Jun 30 21:49:08 1993\n");
-        assert(len == 25); // this is pretty much defined this way by the spec
-        return {llvm::APInt{64, 0}, llvm::APInt{64, len + 1}};
-    }},
     {"dlerror", nullptr},
     {"gai_strerror", nullptr},
     {"gcry_cipher_algo_name", nullptr},
