@@ -99,6 +99,7 @@ std::pair<llvm::Value*, bool> PointerDetector::find_real_base(llvm::Value *arith
                     commonBaseOffseted = baseOffseted ?: commonBaseOffseted;
                     if (base != commonBase) {
                         // not recursive but also not the same as what we found already
+                        //  turned out to be necessary for SPEC06 perlbench (of course)
                         done = true;
                         pointerToRealBase[current] = {current, false}; // was a tough one to compute
                         break;
@@ -107,6 +108,8 @@ std::pair<llvm::Value*, bool> PointerDetector::find_real_base(llvm::Value *arith
 
                 if (!done) {
                     ASSERT_ELSE_UNKOWN(current != commonBase, current);
+                    // was very tough to compute, and very unlikely too. Def keep track of this
+                    pointerToRealBase[current] = {commonBase, commonBaseOffseted};
                     current = commonBase;
                     offseted = commonBaseOffseted;
                 }
