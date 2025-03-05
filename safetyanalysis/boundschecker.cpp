@@ -324,11 +324,11 @@ BoundsChecker::IsInBoundsResult BoundsChecker::isInBounds_internal(llvm::Value* 
                         assert(baseScev);
                         assert(baseScev->getSCEVType() != llvm::scCouldNotCompute);
                         if (baseScev->getSCEVType() != llvm::scUnknown) {
-                            assert(baseScev == phiScev);
                             // some iterations (e.g., std::find with reverse iterator on std::vector) use an i64 instead of ptr
                             // to iterate over the array. `getPointerBase` cannot deal with that, LLVM devs don't know how to solve it
                             // https://github.com/llvm/llvm-project/issues/65743
                             // we just bail out, I guess. I think leela_s or imagick_s triggered this
+                            // perlbench also had a SCEVUminExpr here. We could continue analyzing some of these, but I doubt it's worth it
                         } else {
                             assert(baseScev->getSCEVType() == llvm::scUnknown);
                             auto offsetScev = SCEV.getMinusSCEV(phiScev, baseScev);
