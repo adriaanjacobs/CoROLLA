@@ -187,12 +187,23 @@ llvm::Value* PointerDetector::strip_pointer_casts(llvm::Value *pointer) const {
                 case llvm::Instruction::ZExt:
                     ASSERT_ELSE_UNKOWN(dataLayout.getTypeSizeInBits(castInst->getType()) == 64, castInst);
                     return pointer;
-                case llvm::Instruction::CastOps::IntToPtr:
-                case llvm::Instruction::CastOps::PtrToInt:
+                case llvm::Instruction::IntToPtr:
+                case llvm::Instruction::PtrToInt:
                     assert(castInst->isNoopCast(dataLayout));
                 [[fallthrough]];
-                case llvm::Instruction::CastOps::BitCast: {
+                case llvm::Instruction::BitCast: {
                     pointer = castInst->getOperand(0);
+                } break;
+                case llvm::Instruction::Trunc: {
+                    // i found just one case of this, in SPEC17's x264_s on an AVX-512 machine
+                    //  we check for this specific case, since we'd have to manually vet others
+                    auto i512Val = llvm::dyn_cast<llvm::BitCastOperator>(castInst->getOperand(0));
+                    ASSERT_ELSE_UNKOWN(i512Val && dataLayout.getTypeSizeInBits(i512Val->getType()) == 512, castInst);
+                    auto vectorOf8 = llvm::dyn_cast<llvm::ConstantVector>(i512Val->getOperand(0));
+                    ASSERT_ELSE_UNKOWN(vectorOf8 && vectorOf8->getNumOperands() == 8, castInst); // 8-element vector
+                    auto extractedElement = dataLayout.isLittleEndian() ? vectorOf8->getOperand(0) : vectorOf8->getOperand(vectorOf8->getNumOperands() - 1);
+                    ASSERT_ELSE_UNKOWN(dataLayout.getTypeSizeInBits(extractedElement->getType()) == 64, castInst);
+                    pointer = extractedElement;
                 } break;
                 default: {
                     HANDLE_UNKOWN_VALUE(castInst);
