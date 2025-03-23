@@ -30,8 +30,5 @@
 !reachability/
 !reachability/*
 
-!safefunctioncloner/
-!safefunctioncloner/*
-
 !safetyanalysis/
 !safetyanalysis/*

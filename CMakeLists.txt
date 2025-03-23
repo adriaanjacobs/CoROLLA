@@ -33,7 +33,6 @@ add_subdirectory(instrpointoptimization)
 add_subdirectory(callsiteanalysis)
 add_subdirectory(pointerdetection)
 add_subdirectory(reachability)
-add_subdirectory(safefunctioncloner)
 add_subdirectory(safetyanalysis)
 add_subdirectory(addressability)
 
@@ -46,7 +45,6 @@ target_link_libraries(llvmutils INTERFACE
     instrpointoptimization
     ptrdetectionpass
     reachability
-    safefunctionclonepass
     safetyanalysis
     addressability
 )

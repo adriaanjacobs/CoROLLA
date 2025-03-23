@@ -1,2 +1,0 @@
-add_library(safefunctionclonepass SHARED safefunctioncloner.cpp)
-target_link_libraries(safefunctionclonepass safetyanalysis)

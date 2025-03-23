@@ -25,9 +25,6 @@ public:
         bool isInRange_nonCached(llvm::Value* offsetPtr, llvm::APInt offset, const std::function<std::optional<bool>(llvm::Value*, llvm::APInt, DIRECTION)>& isInRange);
 
         void printBailStats();
-
-        // i don't need to differentiate between offset here FOR MY CURRENT CLONE USECASE
-        llvm::DenseMap<llvm::Argument*, llvm::DenseMap<llvm::CallBase*, std::bitset<2>>> safeCallSites;
     private:
         struct IsInBoundsResult {
             bool inBounds;
