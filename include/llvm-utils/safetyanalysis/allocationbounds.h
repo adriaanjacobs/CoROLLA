@@ -7,6 +7,5 @@
 
 bool isNonWrapperAllocSite(llvm::Value* val);
 bool isKnownLibcAllocator(llvm::Function* func);
-llvm::StringRef getValueDescription(llvm::Value* val);
 
 std::optional<std::pair<llvm::APInt, llvm::APInt>> findMinimumAllocBounds(llvm::Value* allocInstr, llvm::Module& module, llvm::ModuleAnalysisManager& MAM);
