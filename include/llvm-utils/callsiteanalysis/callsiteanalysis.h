@@ -21,6 +21,7 @@ struct CallSiteAnalysisResult {
     void forgetCallSiteInfo(llvm::Function* function);
 
     // warning: currently ignores direct calls from external code (publically linked functions)
+    // warning: also ignores 'byval' attributes on arguments. Callers should manually check & handle this if relevant
     bool getIncomingValuesForArgument(llvm::Argument* argument, llvm::DenseSet<llvm::Value*>& incomingVals) const;
 
     CallSiteAnalysisResult(llvm::Module&, llvm::ModuleAnalysisManager&);

@@ -10,12 +10,7 @@
 #include <llvm/IR/Instructions.h>
 #include <llvm/IR/Constants.h>
 
-#include <bit>
-#include <bitset>
-#include <cstdint>
-#include <array>
 #include <experimental/array>
-#include <optional>
 
 llvm::AnalysisKey PointerDetectionAnalysis::Key;
 
@@ -92,6 +87,13 @@ void PointerDetector::identify_start_pointers(llvm::Module& module) {
                         mark_value(pointerOperand, POINTER);
                     }
                 }
+            }
+        }
+
+        for (auto& arg : func.args()) {
+            if (arg.hasByValAttr()) { // definitely dereferencable; runtime will dereference to create a copy of the pointed-to object
+                ASSERT_ELSE_UNKOWN(arg.getType()->isPointerTy(), &arg); // otherwise how is this legal
+                mark_value(&arg, POINTER);
             }
         }
     }
@@ -908,6 +910,7 @@ std::optional<PointerDetector::ValueType> PointerDetector::is_unconfirmed_pointe
             } else {
                 auto argument = llvm::dyn_cast<llvm::Argument>(current);
                 assert(argument);
+                ASSERT_ELSE_UNKOWN(!argument->hasByValAttr(), argument); // otherwise would be confirmed pointer already
                 llvm::DenseSet<llvm::Value*> argIncomers;
                 bool isComplete = callSiteAnalysis.getIncomingValuesForArgument(argument, argIncomers);
                 incomingValues.insert(argIncomers.begin(), argIncomers.end());

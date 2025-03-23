@@ -73,11 +73,12 @@ void CallSiteAnalysisResult::collectCallSiteInfo(llvm::Value* function, llvm::De
     }
 }
 
+// This interface ignores 'byval' attributes
+//  i.e., it will yield the incoming values for the Argument even when the argument is a byval argument, which is a new allocation site
+//  callers should handle this separately and decide how to interpret the return value of this function accordingly
 bool CallSiteAnalysisResult::getIncomingValuesForArgument(llvm::Argument* argument, llvm::DenseSet<llvm::Value*>& incomingVals) const {
     auto function = argument->getParent();
-
     const auto& callSiteInfo = getCallSiteInfo(function);
-
     bool isComplete = callSiteInfo.isOnlyDirectlyCalled() && !callSiteInfo.noUsesFound();
     // collect incoming values for the argument value, in suitable callsites
     for (auto callInst : callSiteInfo.directCallSites) {

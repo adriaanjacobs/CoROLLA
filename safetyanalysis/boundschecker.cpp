@@ -167,8 +167,7 @@ BoundsChecker::IsInBoundsResult BoundsChecker::isInBounds_internal(llvm::Value* 
             }
             return IsInBoundsResult::True(); // the program will crash when dereferencing these anyway
         } else if (auto argument = llvm::dyn_cast<llvm::Argument>(current)) {
-            auto function = argument->getParent();
-
+            ASSERT_ELSE_UNKOWN(!argument->hasByValAttr(), argument); // should have been caught by isAllocationSite already                
             auto& callSiteAnalysis = MAM.getResult<CallSiteAnalysis>(module); 
             llvm::DenseSet<llvm::Value*> incomingVals;
             bool isComplete = callSiteAnalysis.getIncomingValuesForArgument(argument, incomingVals);
