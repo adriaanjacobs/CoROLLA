@@ -42,6 +42,7 @@ public:
         IsInBoundsResult isInBounds_internal(llvm::Value* offsetPtr, llvm::APInt storeSize, const std::function<std::optional<bool>(llvm::Value*, llvm::APInt, DIRECTION)>& isInRange, bool checkTheCache = true);
         std::optional<IsInBoundsResult> isInCache(llvm::Value* offsetPtr, llvm::APInt offset) const;
 
+        llvm::SmallVector<llvm::CallBase*> callStack;
         llvm::DenseMap<llvm::Value*, llvm::DenseMap<llvm::APInt, std::optional<IsInBoundsResult>>> boundsCache;
         llvm::DenseMap<llvm::StringRef, size_t> bailStats;
         llvm::Module& module;

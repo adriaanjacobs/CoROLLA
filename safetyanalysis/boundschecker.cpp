@@ -39,6 +39,7 @@ void BoundsChecker::printBailStats() {
 }
 
 bool BoundsChecker::isInBounds(llvm::Value* offsetPtr, llvm::APInt storeSize) {
+    assert(callStack.empty()); // otherwise we didnt clear something in time
     auto [ptrIt, ptrInserted] = boundsCache.try_emplace(offsetPtr);
     assert(ptrIt != boundsCache.end());
     auto [offsetIt, offsetInserted] = ptrIt->getSecond().try_emplace(storeSize, std::nullopt);
@@ -91,6 +92,10 @@ past_fail:
 }
 
 std::optional<BoundsChecker::IsInBoundsResult> BoundsChecker::isInCache(llvm::Value* offsetPtr, llvm::APInt offset) const {
+    // don't check the cache if we're going to use calling context information
+    if (llvm::isa<llvm::Argument>(offsetPtr) && !callStack.empty())
+        return std::nullopt;
+    
     auto ptrIt = boundsCache.find(offsetPtr);
     if (ptrIt != boundsCache.end()) {
         auto offsetIt = ptrIt->getSecond().find(offset);
@@ -118,13 +123,12 @@ BoundsChecker::IsInBoundsResult BoundsChecker::isInBounds_internal(llvm::Value* 
         llvm::APInt offset;
     };
     static thread_local std::vector<PassedValue> passedInstrs;
-    const auto size = passedInstrs.size();
-    // llvm::outs() << rand() << ": Called findoffset (nested level: " << size << ")\n";
+    const auto numPassedValues = passedInstrs.size();
     run_on_destruct resetPassedInstrs([&](){
         assert(passedInstrs.size() >= 1);
-        assert(size <= passedInstrs.size());
-        passedInstrs.erase(passedInstrs.begin() + size, passedInstrs.end());
-        assert(passedInstrs.size() == size);
+        assert(numPassedValues <= passedInstrs.size());
+        passedInstrs.erase(passedInstrs.begin() + numPassedValues, passedInstrs.end());
+        assert(passedInstrs.size() == numPassedValues);
     });
 
     auto& dataLayout = module.getDataLayout();
@@ -167,7 +171,18 @@ BoundsChecker::IsInBoundsResult BoundsChecker::isInBounds_internal(llvm::Value* 
             }
             return IsInBoundsResult::True(); // the program will crash when dereferencing these anyway
         } else if (auto argument = llvm::dyn_cast<llvm::Argument>(current)) {
-            ASSERT_ELSE_UNKOWN(!argument->hasByValAttr(), argument); // should have been caught by isAllocationSite already                
+            ASSERT_ELSE_UNKOWN(!argument->hasByValAttr(), argument); // should have been caught by isAllocationSite already
+
+            // check whether we can context-sensitively analyze this call
+            if (!callStack.empty()) {
+                auto caller = callStack.pop_back_val();
+                // sanity check that we were really called from the latest callsite in the call stack
+                if (auto calledFunc = caller->getCalledFunction()) // maybe we can look through some indirect calls in the future, too
+                    ASSERT_ELSE_UNKOWN(calledFunc == argument->getParent(), argument);
+                auto argOperand = caller->getArgOperand(argument->getArgNo());
+                return isInBounds_internal<DIR>(argOperand, offset, isInRange);
+            }
+            
             auto& callSiteAnalysis = MAM.getResult<CallSiteAnalysis>(module); 
             llvm::DenseSet<llvm::Value*> incomingVals;
             bool isComplete = callSiteAnalysis.getIncomingValuesForArgument(argument, incomingVals);
@@ -200,6 +215,17 @@ BoundsChecker::IsInBoundsResult BoundsChecker::isInBounds_internal(llvm::Value* 
                     ASSERT_ELSE_UNKOWN(!calledFunc->returnDoesNotAlias(), calledFunc);
                     return IsInBoundsResult::False("call: unknown external func");
                 }
+
+                // push this callsite to the callstack to inform later analysis on Arguments that they can 
+                //  simply return back to this callsite
+                auto size = callStack.size();
+                callStack.push_back(call);
+                defer (
+                    // clear everything in the callstack after (and including) this frame
+                    while (callStack.size() > size) 
+                        callStack.pop_back();
+                );
+
                 // check if all return values happen to be in bounds, if so we gucci
                 for (auto& bb : *calledFunc) {
                     if (auto retInst = llvm::dyn_cast<llvm::ReturnInst>(bb.getTerminator())) {
