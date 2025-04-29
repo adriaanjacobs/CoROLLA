@@ -270,6 +270,8 @@ BoundsChecker::IsInBoundsResult BoundsChecker::isInBounds_internal(llvm::Value* 
                 llvm::SmallVector<llvm::Value*> constantIndices;
                 for (auto scev : subscripts) {
                     // TODO: fix this, not entirely accurate (lower/negative bound might be more dangerous than upper bound)
+                    // BUG: This is wrong! we ignore super high values (UINT64_MAX), they just wrap on the addition later
+                    //  we should detect them and bail out here (or inside getSignedSCEVLimit)
                     auto limit = getSignedSCEVLimit<DIR>(scev, funcScev);
                     if (!limit.has_value())
                         break;
