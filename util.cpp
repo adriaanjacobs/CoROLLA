@@ -78,24 +78,19 @@ llvm::MustBeExecutedContextExplorer getMustBeExecutedContextExplorer(llvm::Funct
     );
 }
 
-llvm::Value* castToInt64Ty(llvm::Value* val, llvm::Instruction* insertBefore, llvm::StringRef name) {
-    llvm::Type* int64Ty = llvm::Type::getInt64Ty(insertBefore->getModule()->getContext());
-
-    if (val->getType()->isPointerTy()) {
-        auto ptrToInt = llvm::PtrToIntInst::Create(llvm::CastInst::PtrToInt, val, int64Ty, name, insertBefore);
-        val = ptrToInt;
-    }
-
-    assert(val->getType()->isIntegerTy());
-    assert(insertBefore->getModule()->getDataLayout().getTypeSizeInBits(val->getType()).getFixedSize() == 64);
-    return val;
-}
-
 // check if the cast is necessary first, otherwise fallback immediately
 llvm::Value* createBitOrPointerCastIfNecessary(llvm::Value* S, llvm::Type* Ty, const llvm::Twine& Name, llvm::Instruction* InsertBefore) {
     if (S->getType() == Ty)
         return S;
     return llvm::CastInst::CreateBitOrPointerCast(S, Ty, Name, InsertBefore);
+}
+
+llvm::Value* castToInt64Ty(llvm::Value* val, llvm::Instruction* insertBefore, llvm::StringRef name) {
+    llvm::Type* int64Ty = llvm::Type::getInt64Ty(insertBefore->getModule()->getContext());
+    val = createBitOrPointerCastIfNecessary(val, int64Ty, name, insertBefore);
+    assert(val->getType()->isIntegerTy());
+    assert(insertBefore->getModule()->getDataLayout().getTypeSizeInBits(val->getType()).getFixedSize() == 64);
+    return val;
 }
 
 std::string getModuleHash(llvm::Module& module) {
