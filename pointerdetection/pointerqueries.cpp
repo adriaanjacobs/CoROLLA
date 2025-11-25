@@ -96,7 +96,8 @@ std::pair<llvm::Value*, bool> PointerDetector::find_real_base(llvm::Value *arith
                 bool commonBaseOffseted = offseted;
                 for (auto it = firstIt + 1; it != phiNode->incoming_values().end(); it++) {
                     auto [base, baseOffseted] = find_real_base(*it);
-                    commonBaseOffseted = baseOffseted ?: commonBaseOffseted;
+                    if (baseOffseted)
+                        commonBaseOffseted = true;
                     if (base != commonBase) {
                         // not recursive but also not the same as what we found already
                         //  turned out to be necessary for SPEC06 perlbench (of course)

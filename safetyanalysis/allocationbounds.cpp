@@ -42,7 +42,7 @@ std::optional<std::pair<llvm::APInt, llvm::APInt>> findMinimumAllocBounds(llvm::
     auto& dataLayout = module.getDataLayout();
     if (auto allocaInstr = llvm::dyn_cast<llvm::AllocaInst>(allocInstr)) {
         auto size = dataLayout.getTypeAllocSize(allocaInstr->getAllocatedType());
-        ASSERT_ELSE_UNKOWN(size >= 0, allocInstr); // gcc's `combine_givs` does `alloca(0)` and LLVM is happy with it
+        // size may be 0! gcc's `combine_givs` does `alloca(0)` and LLVM is happy with it
         return std::pair{llvm::APInt{64, 0}, llvm::APInt{64, size, true}};
     } else if (auto argument = llvm::dyn_cast<llvm::Argument>(allocInstr)) {
         ASSERT_ELSE_UNKOWN(argument->hasByValAttr(), argument); // otherwise not an allocsite
