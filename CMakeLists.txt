@@ -2,6 +2,10 @@ cmake_minimum_required(VERSION 3.5)
 
 project(llvm-utils)
 
+# exclude all targets here from default compilation. 
+# Build only those that a parent user depends on
+set_directory_properties(PROPERTIES EXCLUDE_FROM_ALL YES)
+
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 find_package(LLVM 15 REQUIRED CONFIG)
@@ -26,6 +30,8 @@ add_compile_options(-O2)
 
 add_library(util SHARED util.cpp)
 target_link_libraries(util breakconstantgeps)
+# everyone depends on this, so everyone gets the include path
+target_include_directories(util PUBLIC include/)
 
 add_subdirectory(breakconstantgeps)
 add_subdirectory(compileOTF)
