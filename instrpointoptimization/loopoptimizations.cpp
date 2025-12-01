@@ -89,19 +89,10 @@ llvm::Value* LoopHoister<llvm::Function>::computeICMP(llvm::ICmpInst::Predicate 
     return select;
 }
 
-void LoopHoister<llvm::Function>::hoistLoopBoundMemAccesses(llvm::DenseMap<llvm::Use*, InstrumentationPoint*>& useToPoint, bool permitNonMustExecute) {
+LoopHoister<llvm::Function>::Stats LoopHoister<llvm::Function>::hoistLoopBoundMemAccesses(llvm::DenseMap<llvm::Use*, InstrumentationPoint*>& useToPoint, bool permitNonMustExecute) {
     auto& context = function.getContext();
 
-    size_t pointsInLoops = 0;
-    size_t hoistedLIPoints = 0;
-    size_t unsoundlyHoistedPoints = 0;
-    size_t noMustExecuteLoopInvariant = 0;
-
-    size_t cantComputeBackEdgeCount = 0;
-    size_t exitValueComputed = 0;
-    size_t unexpandableExitvalue = 0;
-    size_t operandDependsOnIV = 0;
-    size_t operandDoesNotDependOnIV = 0;
+    Stats stats{};
 
     // which instrumentation point descibes which use
     llvm::DenseMap<InstrumentationPoint*, llvm::DenseSet<llvm::Use*>> pointToUses;
@@ -310,7 +301,7 @@ void LoopHoister<llvm::Function>::hoistLoopBoundMemAccesses(llvm::DenseMap<llvm:
             if (auto loop = loopInfo.getLoopFor(point->insertBefore->getParent())) {
                 // gcc has loops which dont seem to be in this form
                 // assert(loop->isLoopSimplifyForm());
-                pointsInLoops += !i;
+                stats[pointsInLoops] += !i;
                 auto preheader = loop->getLoopPreheader();
                 assert(preheader);
                 assert(point->insertBefore->getParent() != preheader);
@@ -336,18 +327,18 @@ void LoopHoister<llvm::Function>::hoistLoopBoundMemAccesses(llvm::DenseMap<llvm:
                         // record any "forced" hoisting in case the instrumentation wants to treat it differently 
                         if (!point->unsoundlyHoisted) 
                             point->unsoundlyHoisted = !hoistable;
-                        hoistedLIPoints += !i;
-                        unsoundlyHoistedPoints += !i && !hoistable;
+                        stats[hoistedLIPoints] += !i;
+                        stats[unsoundlyHoistedPoints] += !i && !hoistable;
                         change = true;
-                    } else noMustExecuteLoopInvariant += !i;
+                    } else stats[noMustExecuteLoopInvariant] += !i;
                 } else {
                     auto operandScev = SCEV.getSCEVAtScope(point->pointerOperand, loop);
                     if (auto addrec = llvm::dyn_cast<llvm::SCEVAddRecExpr>(operandScev)) {
-                        operandDependsOnIV += !i;
+                        stats[operandDependsOnIV] += !i;
                         // figure out the trip count & evaluate the addrec at that iteration
                         auto backEdgeTakenScev = SCEV.getBackedgeTakenCount(loop);
                         if (llvm::isa<llvm::SCEVCouldNotCompute>(backEdgeTakenScev)) {
-                            cantComputeBackEdgeCount += !i;
+                            stats[cantComputeBackEdgeCount] += !i;
                             // pointer depends on IV but the loop's end condition does not. 
                             // e.g., bzip2's uInt64_toAscii
                             // if we can detect the loop's first & last iteration, we could optimize this
@@ -373,7 +364,7 @@ void LoopHoister<llvm::Function>::hoistLoopBoundMemAccesses(llvm::DenseMap<llvm:
                                 auto upperVal = tryExpandSCEV(upperScev, pointerType, preheader->getTerminator());
 
                                 if (lowerVal && upperVal) {
-                                    exitValueComputed += !i;
+                                    stats[exitValueComputed] += !i;
 
                                     if (lowerVal == upperVal && !backEdgeTakenScev->isZero()) {
                                         // it _can_ happen (e.g. add64 in mbedtls' MPI code) that we end up with a single-iteration loop
@@ -425,7 +416,7 @@ void LoopHoister<llvm::Function>::hoistLoopBoundMemAccesses(llvm::DenseMap<llvm:
 
                                     change = true;
                                 } else {
-                                    unexpandableExitvalue += !i;
+                                    stats[unexpandableExitvalue] += !i;
                                 }
                             } else {
                                 // once again, we have to find the first & last accessed memory location here,
@@ -445,7 +436,7 @@ void LoopHoister<llvm::Function>::hoistLoopBoundMemAccesses(llvm::DenseMap<llvm:
                         //      -> if we recognize this, we can hoist it with range detection
                         // index is changed in weird or non-incremental ways -> SCEV cant detect recurrence (gobmk's mark_string in board.c)
                         // 
-                        operandDoesNotDependOnIV += !i;
+                        stats[operandDoesNotDependOnIV] += !i;
                         ivIndependentPoints.insert(point);
                     }
                 }
@@ -493,18 +484,7 @@ void LoopHoister<llvm::Function>::hoistLoopBoundMemAccesses(llvm::DenseMap<llvm:
     }
 #endif
 
-    llvm::outs() << pointsInLoops << " points in loops:\n";
-    llvm::outs() << "\t"<< (hoistedLIPoints + noMustExecuteLoopInvariant) << "/" << pointsInLoops << " are loop invariant.\n";
-        llvm::outs() << "\t\t" << hoistedLIPoints << "/" << (hoistedLIPoints + noMustExecuteLoopInvariant) << " hoisted to preheader "
-                    << "(" << unsoundlyHoistedPoints << " unsoundly).\n";
-        llvm::outs() << "\t\t" << noMustExecuteLoopInvariant << "/" << (hoistedLIPoints + noMustExecuteLoopInvariant) << " are not guaranteed to execute.\n";
-    llvm::outs() << "\t" << operandDependsOnIV << "/" << pointsInLoops << " depend on the IV.\n";
-        llvm::outs() << "\t\t" << cantComputeBackEdgeCount << "/" << operandDependsOnIV << " have no computable backEdgeTakenCount\n";
-        llvm::outs() << "\t\t" << "We can compute " << (operandDependsOnIV - cantComputeBackEdgeCount) << "/" << operandDependsOnIV << " backEdgeTakenCounts.\n";
-            llvm::outs() << "\t\t\t" << (unexpandableExitvalue + exitValueComputed) << "/" << operandDependsOnIV << " must execute once the preheader is reached.\n";
-                llvm::outs() << "\t\t\t\t" << exitValueComputed << "/" << (unexpandableExitvalue + exitValueComputed) << " can be expanded & hoisted\n";
-
-    llvm::outs() << "\t" << operandDoesNotDependOnIV << "/" << pointsInLoops << " DO NOT depend on the IV.\n";
+    return stats;
 }
 
 
@@ -514,8 +494,25 @@ LoopHoister<llvm::Module>::LoopHoister(llvm::Module& M, llvm::ModuleAnalysisMana
 
 void LoopHoister<llvm::Module>::hoistLoopBoundMemAccesses(llvm::DenseMap<llvm::Function*, llvm::DenseMap<llvm::Use*, InstrumentationPoint*>>& funcToInstPoints, bool permitNonMustExecute) {
     auto& pointerDetector = MAM.getResult<PointerDetectionAnalysis>(module);
+    LoopHoister<llvm::Function>::Stats stats{};
     for (auto& [func, useToPoint] : funcToInstPoints) {
         auto [it, inserted] = funcHoisters.try_emplace(func, *func, getFAM(module, MAM), pointerDetector);
-        it->second.hoistLoopBoundMemAccesses(useToPoint, permitNonMustExecute);
+        auto funcStats = it->second.hoistLoopBoundMemAccesses(useToPoint, permitNonMustExecute);
+        stats += funcStats;
     }
+
+    using enum LoopHoister<llvm::Function>::StatCounter;
+
+    llvm::outs() << stats[pointsInLoops] << " points in loops:\n";
+    llvm::outs() << "\t"<< (stats[hoistedLIPoints] + stats[noMustExecuteLoopInvariant]) << "/" << stats[pointsInLoops] << " are loop invariant.\n";
+        llvm::outs() << "\t\t" << stats[hoistedLIPoints] << "/" << (stats[hoistedLIPoints] + stats[noMustExecuteLoopInvariant]) << " hoisted to preheader "
+                    << "(" << stats[unsoundlyHoistedPoints] << " unsoundly).\n";
+        llvm::outs() << "\t\t" << stats[noMustExecuteLoopInvariant] << "/" << (stats[hoistedLIPoints] + stats[noMustExecuteLoopInvariant]) << " are not guaranteed to execute.\n";
+    llvm::outs() << "\t" << stats[operandDependsOnIV] << "/" << stats[pointsInLoops] << " depend on the IV.\n";
+        llvm::outs() << "\t\t" << stats[cantComputeBackEdgeCount] << "/" << stats[operandDependsOnIV] << " have no computable backEdgeTakenCount\n";
+        llvm::outs() << "\t\t" << "We can compute " << (stats[operandDependsOnIV] - stats[cantComputeBackEdgeCount]) << "/" << stats[operandDependsOnIV] << " backEdgeTakenCounts.\n";
+            llvm::outs() << "\t\t\t" << (stats[unexpandableExitvalue] + stats[exitValueComputed]) << "/" << stats[operandDependsOnIV] << " must execute once the preheader is reached.\n";
+                llvm::outs() << "\t\t\t\t" << stats[exitValueComputed] << "/" << (stats[unexpandableExitvalue] + stats[exitValueComputed]) << " can be expanded & hoisted\n";
+
+    llvm::outs() << "\t" << stats[operandDoesNotDependOnIV] << "/" << stats[pointsInLoops] << " DO NOT depend on the IV.\n";
 }

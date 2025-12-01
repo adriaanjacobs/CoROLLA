@@ -53,8 +53,33 @@ class LoopHoister<llvm::Function> {
 public:
     LoopHoister(llvm::Function& F, llvm::FunctionAnalysisManager& FAM, const PointerDetector& pointerDetector);
 
+    enum StatCounter {
+        // all
+        pointsInLoops,
+        // LI
+        hoistedLIPoints,
+        unsoundlyHoistedPoints,
+        noMustExecuteLoopInvariant,
+        // loop-inductive
+        cantComputeBackEdgeCount,
+        exitValueComputed,
+        unexpandableExitvalue,
+        operandDependsOnIV,
+        // non-inductive
+        operandDoesNotDependOnIV,
+        NUM_STATS,
+    };
+
+    struct Stats : std::array<size_t, NUM_STATS> {
+        Stats& operator+=(const Stats& other) {
+            for (uint i = 0; i < size(); i++)
+                (*this)[i] += other[i];
+            return *this;
+        }
+    };
+
     // Maximally hoist logs in loops into preheaders
-    void hoistLoopBoundMemAccesses(llvm::DenseMap<llvm::Use*, InstrumentationPoint*>& instPoints, bool permitNonMustExecute = false);
+    Stats hoistLoopBoundMemAccesses(llvm::DenseMap<llvm::Use*, InstrumentationPoint*>& instPoints, bool permitNonMustExecute = false);
 };
 
 // legacy specialization for backward compat with LTO invocation
