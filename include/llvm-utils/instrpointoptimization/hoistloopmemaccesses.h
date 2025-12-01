@@ -29,19 +29,42 @@ struct InstrumentationPoint {
     }
 };
 
+template<typename IR>
 class LoopHoister {
-    llvm::Module& module;
-    llvm::ModuleAnalysisManager& MAM;
+    // template deduction guide
+    LoopHoister(IR& IRObject, llvm::AnalysisManager<IR>& IRAM);
+};
 
-    // map because DenseMap moves on try_emplace and SCEVExpander can't handle that
-    std::map<llvm::Function*, llvm::SCEVExpander> scevExpanders;
-    llvm::SCEVExpander& getOrCreateSCEVExpander(llvm::Function* func, llvm::ScalarEvolution& SCEV);
+struct PointerDetector;
+
+template<>
+class LoopHoister<llvm::Function> {
+    llvm::Function& function;
+    llvm::FunctionAnalysisManager& FAM;
+    llvm::ScalarEvolution& SCEV;
+    llvm::SCEVExpander SCEVExpander;
+    const PointerDetector& pointerDetector;
 
     llvm::Value* tryExpandSCEV(const llvm::SCEV* scev, llvm::Type* expandedTy, llvm::Instruction* insertBefore);
 
     llvm::Use* findLoopInvariantPointerBaseUse(llvm::Loop* loop, llvm::Value* pointerOperand);
     llvm::Value* computeICMP(llvm::ICmpInst::Predicate pred, llvm::Value* lhs, llvm::Value* rhs, llvm::Instruction* insertBefore);
 
+public:
+    LoopHoister(llvm::Function& F, llvm::FunctionAnalysisManager& FAM, const PointerDetector& pointerDetector);
+
+    // Maximally hoist logs in loops into preheaders
+    void hoistLoopBoundMemAccesses(llvm::DenseMap<llvm::Use*, InstrumentationPoint*>& instPoints, bool permitNonMustExecute = false);
+};
+
+// legacy specialization for backward compat with LTO invocation
+template<>
+class LoopHoister<llvm::Module> {
+    llvm::Module& module;
+    llvm::ModuleAnalysisManager& MAM;
+    // map because DenseMap moves on try_emplace and SCEVExpander can't handle that
+    std::map<llvm::Function*, LoopHoister<llvm::Function>> funcHoisters;
+    
 public:
     LoopHoister(llvm::Module& M, llvm::ModuleAnalysisManager& MAM);
 
