@@ -6,6 +6,7 @@
 #include <llvm-utils/reachability/reachingdefinitions.h>
 #include <llvm-utils/breakconstantgeps/BreakConstantGEPs.h>
 #include <llvm-utils/callsiteanalysis/callsiteanalysis.h>
+#include <llvm-utils/instrpointoptimization/dominationpruning.h>
 
 #include <llvm/IR/IntrinsicsX86.h>
 #include <llvm/IR/Verifier.h>
@@ -131,81 +132,29 @@ llvm::AnalysisKey UnsafeAccessFinderAnalysis::Key;
 void UnsafeAccessFinderAnalysis::UnsafeAccessInfo::pruneDominatedAccesses(llvm::Module& module, llvm::ModuleAnalysisManager& MAM, llvm::DenseSet<llvm::Instruction*>& loadAndStores) {
     auto& FAM = getFAM(module, MAM);
     auto& pointerDetector = MAM.getResult<PointerDetectionAnalysis>(module);
-    llvm::DenseMap<llvm::Value* /* operand */, llvm::SmallVector<llvm::Instruction*> /* loadAndStores */> opToUsers;
+
+    llvm::DenseMap<llvm::Instruction*, std::unique_ptr<InstrumentationPoint>> instPoints;
+    llvm::DenseMap<llvm::Function*, llvm::DenseMap<InstrumentationPoint*, llvm::DenseSet<llvm::Use*>>> funcToPointToUse;
     for (auto inst : loadAndStores) {
-        auto operand = pointerDetector.strip_pointer_casts(llvm::getLoadStorePointerOperand(inst));
-        assert(operand);
-        auto it = opToUsers.try_emplace(operand).first;
-        assert(it != opToUsers.end());
-        it->getSecond().push_back(inst);
+        auto ptrUse = getLoadStorePointerOperandUse(inst);
+        instPoints[inst] = std::make_unique<InstrumentationPoint>(inst, ptrUse->get());
+        funcToPointToUse[inst->getFunction()][instPoints[inst].get()] = {ptrUse};
     }
 
-    llvm::DenseSet<llvm::Instruction*> toRemove;
-    for (auto& opuser : opToUsers) {
-        for (auto inst : opuser.getSecond()) {
-            auto& domTree = FAM.getResult<llvm::DominatorTreeAnalysis>(*inst->getFunction());
-            for (auto potDom : opuser.getSecond()) {
-                if (potDom == inst)
-                    continue;
-                if (domTree.dominates(potDom, inst)) {
-                    toRemove.insert(inst);
-                    break;
-                }
-            }
-        }
+    size_t originalLoadStoresSize = loadAndStores.size(); 
+    loadAndStores.clear();
+
+    for (auto& [func, pointToUses] : funcToPointToUse) {
+        auto& domTree = FAM.getResult<llvm::DominatorTreeAnalysis>(*func);
+        auto& loopInfo = FAM.getResult<llvm::LoopAnalysis>(*func);
+        pruneDominatedChecks(pointToUses, [&pointerDetector] (llvm::Value* ptr) { return pointerDetector.strip_pointer_casts(ptr); }, domTree, loopInfo);
+
+        for (auto& [point, _] : pointToUses)
+            loadAndStores.insert(point->insertBefore);
     }
 
-    auto directlyDominated = toRemove.size();
-
-    for (auto& [pointer, checks] : opToUsers) {
-        // we operate on blocks here, since there may still be many checks in the same block that we haven't removed
-        llvm::DenseSet<llvm::BasicBlock*> blocks;
-        for (auto check : checks) 
-            blocks.insert(check->getParent());
-
-        // initial phase: collect directly-tainted blocks
-        llvm::DenseSet<llvm::BasicBlock*> checkedBlocks;
-        for (auto block : blocks) {
-            auto function = block->getParent();
-            auto& domTree = FAM.getResult<llvm::DominatorTreeAnalysis>(*function);
-
-            llvm::SmallVector<llvm::BasicBlock*> descendants;
-            domTree.getDescendants(block, descendants);
-            for (auto desc : descendants) 
-                checkedBlocks.insert(desc);
-        }
-        
-        llvm::DenseSet<llvm::BasicBlock*> workingSet = checkedBlocks;
-        llvm::DenseSet<llvm::BasicBlock*> prunableBlocks;
-        size_t oldsize = 0;
-        do {
-            oldsize = workingSet.size();
-            for (auto& block : workingSet) {
-                const auto& preds = llvm::predecessors(block);
-                bool allChecked = !preds.empty() && llvm::all_of(preds, [&] (auto pred) -> bool {
-                    return workingSet.contains(pred);
-                });
-                if (allChecked)
-                    prunableBlocks.insert(block);
-            }
-            workingSet.insert(prunableBlocks.begin(), prunableBlocks.end());
-        } while (oldsize != workingSet.size());
-        
-        // final phase: convert back to checks (across functions, but yea this will not be the bottleneck)
-        for (auto check : checks)
-            if (prunableBlocks.contains(check->getParent()))
-                toRemove.insert(check);
-    }
-
-    llvm::outs() << "In " << loadAndStores.size() << " accesses, we were able to find " << directlyDominated << " (+ " << toRemove.size()-directlyDominated << ") redundant ones (" << 100.0f*toRemove.size()/loadAndStores.size() << "%).\n";
-
-    for (auto it = loadAndStores.begin(); it != loadAndStores.end(); ) {
-        if (toRemove.contains(*it)) {
-            loadAndStores.erase(it++);
-        } else {
-            ++it;
-        }
-    }
+    size_t removed = originalLoadStoresSize - loadAndStores.size();
+    llvm::outs() << "In " << originalLoadStoresSize << " accesses, we were able to find " << removed << " redundant ones (" << 100.0f*removed/originalLoadStoresSize << "%).\n";
 }
 
 llvm::PreservedAnalyses MemAccessInstrumentator::run(llvm::Module &module, llvm::ModuleAnalysisManager &mam) {
