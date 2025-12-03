@@ -1,33 +1,12 @@
 #pragma once
 
+#include "instrumentationpoint.h"
+
 #include <llvm/IR/PassManager.h>
-#include <llvm/IR/Module.h>
 #include <llvm/Analysis/ScalarEvolution.h>
 #include <llvm/Transforms/Utils/ScalarEvolutionExpander.h>
 
 #include <map>
-
-struct InstrumentationPoint {
-    llvm::Instruction* insertBefore;
-    llvm::Value* pointerOperand;
-    llvm::Value* endOfAddressRange = pointerOperand;
-    bool unsoundlyHoisted = false;
-
-    InstrumentationPoint(llvm::Instruction* insertBefore, llvm::Value* pointerOperand) : 
-        insertBefore{insertBefore}, pointerOperand{pointerOperand}
-    {}
-
-    bool isRangeCheck() const {
-        return pointerOperand != endOfAddressRange;
-    }
-
-    void print() {
-        llvm::errs() << "ptr: " << *pointerOperand << "\n";
-        if (endOfAddressRange != pointerOperand)
-            llvm::errs() << "end: " << *endOfAddressRange << "\n";
-        llvm::errs() << "insertbefore: " << *insertBefore << "\n";
-    }
-};
 
 template<typename IR>
 class LoopHoister {
