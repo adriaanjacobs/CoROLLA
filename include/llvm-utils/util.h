@@ -254,3 +254,9 @@ llvm::Value* createBitOrPointerCastIfNecessary(
     const llvm::Twine &Name = "",               ///< Name for the instruction
     llvm::Instruction *InsertBefore = nullptr   ///< Place to insert the instruction
 );
+
+inline llvm::Use* getLoadStorePointerOperandUse(llvm::Instruction* I) {
+    if (!llvm::isa<llvm::LoadInst,llvm::StoreInst>(I))
+        return nullptr;
+    return &I->getOperandUse(llvm::isa<llvm::LoadInst>(I) ? 0 : 1);
+}
