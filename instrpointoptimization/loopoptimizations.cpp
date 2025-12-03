@@ -140,23 +140,9 @@ LoopHoister<llvm::Function>::Stats LoopHoister<llvm::Function>::hoistLoopBoundMe
             for (auto& [point, _] : pointToUses) 
                 ptrToPoints[stripPointerCasts(point->pointerOperand)].insert(point);
             for (auto& [_, samePtrPoints] : ptrToPoints) {
-                // it's possible that the summarization transformation resulted in multiple of the same points at the same location
-                // fix up places where that happened
-
-                // FIXME: when erasing points (i.e. allowing them to be checked by other points), 
-                //  we have to ensure that the insertbefores of the points that we keep (to describe the others) dominate all the points
-                //  they replace. Otherwise the inserted point may not execute for all memory accesses it intends to check
-                //  check this here with a dominator check
-                //  im currently seeing a case in benchmark.ll like:
-                //
-                //  if (cond)
-                //      point1;
-                //  else
-                //      point2;
-                //  
-                //  where one of the points is somehow deleted, and the other point is supposed to cover for them
-                //  this is clearly improper
-
+                // first, we de-duplicate same points in same place
+                //  it's possible that the summarization transformation resulted in multiple of the same points at the same location
+                //  fix up places where that happened
                 llvm::DenseMap<llvm::Instruction*, llvm::DenseSet<InstrumentationPoint*>> insertBfToPoints;
                 for (auto point : samePtrPoints)
                     insertBfToPoints[point->insertBefore].insert(point);
@@ -164,7 +150,8 @@ LoopHoister<llvm::Function>::Stats LoopHoister<llvm::Function>::hoistLoopBoundMe
                 for (auto& [insertBefore, sameBfPoints] : insertBfToPoints) {
                     // all these points share the same insertBf and pointerOperand!
                     // we pick one point and let it describe all other uses
-                    //  if possible, we pick a range check. if there's multiple range checks, pick one but don't delete the others
+                    //  we can't delete range checks. if possible, we pick a range check. if there's multiple range checks, pick one but don't delete the others
+                    //  if there's no range checks, we pick a random non-range point and move on
                     llvm::DenseSet<InstrumentationPoint*> checksToKeep;
                     for (auto& point : sameBfPoints)
                         if (point->isRangeCheck())
@@ -173,10 +160,13 @@ LoopHoister<llvm::Function>::Stats LoopHoister<llvm::Function>::hoistLoopBoundMe
                     auto singlePoint = [&, &points = sameBfPoints] () -> InstrumentationPoint* {
                         if (!checksToKeep.empty())
                             return *checksToKeep.begin(); // using a range check
+                        assert(points.size() > 0);
                         auto firstNonRangeCheck = *points.begin();
                         checksToKeep.insert(firstNonRangeCheck);
                         return firstNonRangeCheck;
                     } ();
+
+                    assert(checksToKeep.size() >= 1);
 
                     for (auto it = sameBfPoints.begin(); it != sameBfPoints.end();) {
                         if (!checksToKeep.contains(*it)) {
@@ -187,26 +177,52 @@ LoopHoister<llvm::Function>::Stats LoopHoister<llvm::Function>::hoistLoopBoundMe
                             pointToUses[singlePoint].insert(usesDescribed.begin(), usesDescribed.end());
                             pointToUses.erase(*it);
                             samePtrPoints.erase(*it);
-                            sameBfPoints.erase(it++);
+                            sameBfPoints.erase(it);
                             change = true;
-                        } else it++;
+                        };
+                        it++;
                     }
 
                     assert(sameBfPoints.size() == checksToKeep.size());
                 }
 
                 // now, no location contains multiple of the same checks
-
-                // is it possible to reach each point from the function entry without passing through any of the other points?
+                //  we move on to more general split-domination pruning
+                //  is it possible to reach each point from the function entry without passing through any of the other points?
                 llvm::DenseSet<llvm::Instruction*> exclusionSet;
+                // handle the edge case where some of the points are at the function start
+                //  our reachability query cannot handle a from that is also in the exclusionSet
+                auto funcStart = &function.getEntryBlock().front();
+                llvm::DenseSet<InstrumentationPoint*> toRemove;
+                for (auto& point : samePtrPoints) {
+                    if (point->insertBefore == funcStart) {
+                        if (point->isRangeCheck()) {
+                            // clear all other points
+                            toRemove.insert(samePtrPoints.begin(), samePtrPoints.end());
+                            auto dbg = toRemove.erase(point);
+                            assert(dbg);
+                        } else {
+                            // clear all non-range points
+                            for (auto otherpoint : samePtrPoints)
+                                if (!otherpoint->isRangeCheck() && otherpoint != point)
+                                    toRemove.insert(otherpoint);
+                        }
+                    }
+                }
+
+                for (auto point : toRemove) {
+                    samePtrPoints.erase(point);
+                    pointToUses.erase(point);
+                    change = true;
+                }
+
+                // now do the split-domination pruning
                 for (auto point : samePtrPoints)
                     exclusionSet.insert(point->insertBefore);
-                auto funcStart = &function.getEntryBlock().front();
-                // if any of the points is the function start, it should be the only point
-                if (exclusionSet.contains(funcStart)) {
-                    assert(samePtrPoints.size() == 1);
-                    assert((*samePtrPoints.begin())->insertBefore == funcStart);
-                } else {
+                
+                // check reachability edge case: if the funcStart is in the exclusionSet, it trivially dominates all other points
+                //  we should have handled this before
+                if (!exclusionSet.contains(funcStart)) {
                     for (auto point : samePtrPoints) {
                         // range checks cannot be deleted by single-pointer checks, even when dominated
                         //  however, range checks that start on the same base can still help eliminate single-pointer checks
@@ -259,6 +275,7 @@ LoopHoister<llvm::Function>::Stats LoopHoister<llvm::Function>::hoistLoopBoundMe
                     // all of these loopPoints have the same ptrOperand and occur in the same loop.
                     assert(!loopPoints.empty());
                     auto preheader = loop->getLoopPreheader();
+                    assert(preheader);
                     assert(!funcTerminators.empty());
                     // are any of the function exits reachable from the preheader without going through the original point?
                     // if not -> we might be able to move this point to the preheader
