@@ -43,7 +43,7 @@ class LoopHoister<llvm::Function> {
     llvm::FunctionAnalysisManager& FAM;
     llvm::ScalarEvolution& SCEV;
     llvm::SCEVExpander SCEVExpander;
-    const PointerDetector& pointerDetector;
+    const PointerDetector* pointerDetector;
 
     llvm::Value* tryExpandSCEV(const llvm::SCEV* scev, llvm::Type* expandedTy, llvm::Instruction* insertBefore);
 
@@ -51,7 +51,7 @@ class LoopHoister<llvm::Function> {
     llvm::Value* computeICMP(llvm::ICmpInst::Predicate pred, llvm::Value* lhs, llvm::Value* rhs, llvm::Instruction* insertBefore);
 
 public:
-    LoopHoister(llvm::Function& F, llvm::FunctionAnalysisManager& FAM, const PointerDetector& pointerDetector);
+    LoopHoister(llvm::Function& F, llvm::FunctionAnalysisManager& FAM, const PointerDetector* pointerDetector = nullptr);
 
     enum StatCounter {
         // all

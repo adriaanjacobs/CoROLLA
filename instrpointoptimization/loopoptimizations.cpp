@@ -7,7 +7,7 @@
 #include <llvm/Transforms/Utils/ScalarEvolutionExpander.h>
 #include <llvm/IR/Verifier.h>
 
-LoopHoister<llvm::Function>::LoopHoister(llvm::Function& F, llvm::FunctionAnalysisManager& FAM, const PointerDetector& pointerDetector) : 
+LoopHoister<llvm::Function>::LoopHoister(llvm::Function& F, llvm::FunctionAnalysisManager& FAM, const PointerDetector* pointerDetector) : 
     function{F}, FAM{FAM}, 
     SCEV{FAM.getResult<llvm::ScalarEvolutionAnalysis>(F)}, 
     SCEVExpander{SCEV, F.getParent()->getDataLayout(), "expanded"},
@@ -94,6 +94,14 @@ LoopHoister<llvm::Function>::Stats LoopHoister<llvm::Function>::hoistLoopBoundMe
 
     Stats stats{};
 
+    auto stripPointerCasts = [&] (llvm::Value* ptr) -> llvm::Value* {
+        if (pointerDetector)
+            return pointerDetector->strip_pointer_casts(ptr);
+        auto retval = ptr->stripPointerCastsForAliasAnalysis();
+        assert(retval);
+        return retval;
+    };
+
     // which instrumentation point descibes which use
     llvm::DenseMap<InstrumentationPoint*, llvm::DenseSet<llvm::Use*>> pointToUses;
     for (auto& [use, point] : useToPoint) {
@@ -130,7 +138,7 @@ LoopHoister<llvm::Function>::Stats LoopHoister<llvm::Function>::hoistLoopBoundMe
 
             llvm::DenseMap<llvm::Value*, llvm::DenseSet<InstrumentationPoint*>> ptrToPoints;
             for (auto& [point, _] : pointToUses) 
-                ptrToPoints[pointerDetector.strip_pointer_casts(point->pointerOperand)].insert(point);
+                ptrToPoints[stripPointerCasts(point->pointerOperand)].insert(point);
             for (auto& [_, samePtrPoints] : ptrToPoints) {
                 // it's possible that the summarization transformation resulted in multiple of the same points at the same location
                 // fix up places where that happened
@@ -235,7 +243,7 @@ LoopHoister<llvm::Function>::Stats LoopHoister<llvm::Function>::hoistLoopBoundMe
 
             llvm::DenseMap<llvm::Value*, llvm::DenseSet<InstrumentationPoint*>> ptrToPoints;
             for (auto& [point, _] : pointToUses) 
-                ptrToPoints[pointerDetector.strip_pointer_casts(point->pointerOperand)].insert(point);
+                ptrToPoints[stripPointerCasts(point->pointerOperand)].insert(point);
             
             for (auto& [_, samePtrPoints] : ptrToPoints) {
                 llvm::DenseSet<llvm::Instruction*> exclusionSet;
@@ -496,7 +504,7 @@ void LoopHoister<llvm::Module>::hoistLoopBoundMemAccesses(llvm::DenseMap<llvm::F
     auto& pointerDetector = MAM.getResult<PointerDetectionAnalysis>(module);
     LoopHoister<llvm::Function>::Stats stats{};
     for (auto& [func, useToPoint] : funcToInstPoints) {
-        auto [it, inserted] = funcHoisters.try_emplace(func, *func, getFAM(module, MAM), pointerDetector);
+        auto [it, inserted] = funcHoisters.try_emplace(func, *func, getFAM(module, MAM), &pointerDetector);
         auto funcStats = it->second.hoistLoopBoundMemAccesses(useToPoint, permitNonMustExecute);
         stats += funcStats;
     }
