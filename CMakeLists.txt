@@ -18,8 +18,6 @@ include_directories(${LLVM_INCLUDE_DIRS})
 
 set(clang_libs clang-cpp)
 
-include_directories(include/)
-
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_C_STANDARD 17)
