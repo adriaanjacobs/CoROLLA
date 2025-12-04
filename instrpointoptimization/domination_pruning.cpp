@@ -1,5 +1,6 @@
 #include <llvm-utils/instrpointoptimization/dominationpruning.h>
 
+#include <llvm-utils/util.h>
 #include <llvm-utils/reachability/cfg_reachability.h>
 
 bool pruneDominatedChecks(
@@ -114,4 +115,26 @@ bool pruneDominatedChecks(
     }
 
     return change;
+}
+
+void pruneDominatedAccesses(llvm::FunctionAnalysisManager& FAM, llvm::DenseSet<llvm::Instruction*>& loadAndStores, std::function<llvm::Value*(llvm::Value*)> stripPointerCasts) {
+    llvm::DenseMap<llvm::Instruction*, std::unique_ptr<InstrumentationPoint>> instPoints;
+    llvm::DenseMap<llvm::Function*, llvm::DenseMap<InstrumentationPoint*, llvm::DenseSet<llvm::Use*>>> funcToPointToUse;
+    for (auto inst : loadAndStores) {
+        auto ptrUse = getLoadStorePointerOperandUse(inst);
+        instPoints[inst] = std::make_unique<InstrumentationPoint>(inst, ptrUse->get());
+        funcToPointToUse[inst->getFunction()][instPoints[inst].get()] = {ptrUse};
+    }
+
+    size_t originalLoadStoresSize = loadAndStores.size(); 
+    loadAndStores.clear();
+
+    for (auto& [func, pointToUses] : funcToPointToUse) {
+        auto& domTree = FAM.getResult<llvm::DominatorTreeAnalysis>(*func);
+        auto& loopInfo = FAM.getResult<llvm::LoopAnalysis>(*func);
+        pruneDominatedChecks(pointToUses, stripPointerCasts, domTree, loopInfo);
+
+        for (auto& [point, _] : pointToUses)
+            loadAndStores.insert(point->insertBefore);
+    }
 }

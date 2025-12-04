@@ -92,8 +92,6 @@ public:
         const bool onlyStores;
 
         llvm::DenseSet<llvm::Instruction *> unsafeAccesses;
-    private: 
-        void pruneDominatedAccesses(llvm::Module& module, llvm::ModuleAnalysisManager& MAM, llvm::DenseSet<llvm::Instruction*>& instrumentedInsts);
     };
     
     explicit UnsafeAccessFinderAnalysis() = default;

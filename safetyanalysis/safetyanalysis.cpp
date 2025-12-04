@@ -106,7 +106,9 @@ UnsafeAccessFinderAnalysis::UnsafeAccessInfo::UnsafeAccessInfo(llvm::Module& mod
     size_t intraProcedurallyPruned = totalMemAccesses - instrumentedInsts.size();
     llvm::outs() << "Out of " << totalMemAccesses << " memory accesses, we proved that " << intraProcedurallyPruned << " are safe (" << 100.0f*intraProcedurallyPruned/totalMemAccesses << "%)\n";
 
-    pruneDominatedAccesses(module, MAM, instrumentedInsts);
+    size_t beforePruning = instrumentedInsts.size();
+    pruneDominatedAccesses(FAM, instrumentedInsts, [&] (llvm::Value* ptr) { return pointerDetector.strip_pointer_casts(ptr); });
+    llvm::outs() << "In " << beforePruning << " accesses, we were able to find " << (beforePruning - instrumentedInsts.size()) << " redundant ones (" << 100.0f*(beforePruning - instrumentedInsts.size())/beforePruning << "%).\n";
 
     size_t pruned = totalMemAccesses - instrumentedInsts.size();
     llvm::outs() << "In total, we pruned " << pruned << " out of " << totalMemAccesses << " memaccesses (" << (100.0f*(float)pruned/(float)totalMemAccesses) << "%)\n";
@@ -128,34 +130,6 @@ UnsafeAccessFinderAnalysis::UnsafeAccessInfo::UnsafeAccessInfo(llvm::Module& mod
 }
 
 llvm::AnalysisKey UnsafeAccessFinderAnalysis::Key;
-
-void UnsafeAccessFinderAnalysis::UnsafeAccessInfo::pruneDominatedAccesses(llvm::Module& module, llvm::ModuleAnalysisManager& MAM, llvm::DenseSet<llvm::Instruction*>& loadAndStores) {
-    auto& FAM = getFAM(module, MAM);
-    auto& pointerDetector = MAM.getResult<PointerDetectionAnalysis>(module);
-
-    llvm::DenseMap<llvm::Instruction*, std::unique_ptr<InstrumentationPoint>> instPoints;
-    llvm::DenseMap<llvm::Function*, llvm::DenseMap<InstrumentationPoint*, llvm::DenseSet<llvm::Use*>>> funcToPointToUse;
-    for (auto inst : loadAndStores) {
-        auto ptrUse = getLoadStorePointerOperandUse(inst);
-        instPoints[inst] = std::make_unique<InstrumentationPoint>(inst, ptrUse->get());
-        funcToPointToUse[inst->getFunction()][instPoints[inst].get()] = {ptrUse};
-    }
-
-    size_t originalLoadStoresSize = loadAndStores.size(); 
-    loadAndStores.clear();
-
-    for (auto& [func, pointToUses] : funcToPointToUse) {
-        auto& domTree = FAM.getResult<llvm::DominatorTreeAnalysis>(*func);
-        auto& loopInfo = FAM.getResult<llvm::LoopAnalysis>(*func);
-        pruneDominatedChecks(pointToUses, [&pointerDetector] (llvm::Value* ptr) { return pointerDetector.strip_pointer_casts(ptr); }, domTree, loopInfo);
-
-        for (auto& [point, _] : pointToUses)
-            loadAndStores.insert(point->insertBefore);
-    }
-
-    size_t removed = originalLoadStoresSize - loadAndStores.size();
-    llvm::outs() << "In " << originalLoadStoresSize << " accesses, we were able to find " << removed << " redundant ones (" << 100.0f*removed/originalLoadStoresSize << "%).\n";
-}
 
 llvm::PreservedAnalyses MemAccessInstrumentator::run(llvm::Module &module, llvm::ModuleAnalysisManager &mam) {
 

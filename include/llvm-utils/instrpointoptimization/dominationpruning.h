@@ -12,3 +12,9 @@ bool pruneDominatedChecks(
     llvm::LoopInfo& LI
 );
 
+void pruneDominatedAccesses(
+    llvm::FunctionAnalysisManager& FAM, 
+    llvm::DenseSet<llvm::Instruction*>& loadAndStores, 
+    std::function<llvm::Value*(llvm::Value*)> stripPointerCasts
+);
+
