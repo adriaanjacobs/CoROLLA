@@ -256,7 +256,9 @@ const decltype(builtinLibcCallToBounds) builtinLibcCallToBounds {
     {"XRenderFindFormat", nullptr},
     {"XRenderFindStandardFormat", nullptr},
     {"XRenderFindVisualFormat", nullptr},
-    {"XOpenDisplay", nullptr},
+    {"XOpenDisplay", [] (llvm::Module& module, llvm::ModuleAnalysisManager& MAM, llvm::CallBase* callInst) -> std::pair<llvm::APInt, llvm::APInt> {
+        return boundsOfReturnedPointeeType(callInst);
+    }},
     {"XSetIOErrorHandler", nullptr},
     {"XShapeGetRectangles", nullptr},
     {"XShmCreateImage", nullptr},
