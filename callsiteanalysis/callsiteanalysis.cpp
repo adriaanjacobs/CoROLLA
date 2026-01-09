@@ -47,6 +47,11 @@ void CallSiteAnalysisResult::collectCallSiteInfo(llvm::Value* function, llvm::De
                 opaqueUses.insert(&funcUse);
             else 
                 callSites.insert(call);
+        } else if (auto ret = llvm::dyn_cast<llvm::ReturnInst>(user)) {
+            ASSERT_ELSE_UNKOWN(ret->getReturnValue() == function, ret);
+            // FIXME: if this is the only possible return value of this function, we can look through it
+            //  otherwise, just an opaque use
+            opaqueUses.insert(&funcUse);
         } else if (auto storeInst = llvm::dyn_cast<llvm::StoreInst>(user)) {
             ASSERT_ELSE_UNKOWN(storeInst->getValueOperand() == function, user);
             opaqueUses.insert(&funcUse);
@@ -62,6 +67,8 @@ void CallSiteAnalysisResult::collectCallSiteInfo(llvm::Value* function, llvm::De
                 collectCallSiteInfo(user, callSites, opaqueUses);
             else
                 opaqueUses.insert(&funcUse);
+        } else if (llvm::isa<llvm::InsertElementInst,llvm::InsertValueInst>(user)) {
+            opaqueUses.insert(&funcUse);
         } else if (auto icmp = llvm::dyn_cast<llvm::ICmpInst>(user)) {
             // the consideration here is that a icmp indicates that the program expects
             // that some function pointer _may_ refer to function here
