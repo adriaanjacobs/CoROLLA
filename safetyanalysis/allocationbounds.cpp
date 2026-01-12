@@ -86,8 +86,8 @@ std::pair<llvm::APInt, llvm::APInt> boundsOfReturnedPointeeType(llvm::CallBase* 
     return {llvm::APInt{64, 0}, llvm::APInt{64, size, true}};
 }
 
-std::pair<llvm::APInt, llvm::APInt> boundsOfMallocLike(llvm::CallBase* call, llvm::ModuleAnalysisManager& MAM) {
-    return {llvm::APInt{64, 0}, findMinimumUnsignedValue(call->getArgOperand(0), call->getFunction(), MAM)}; 
+std::pair<llvm::APInt, llvm::APInt> boundsOfMallocLike(llvm::CallBase* call, llvm::ModuleAnalysisManager& MAM, int argOperand = 0) {
+    return {llvm::APInt{64, 0}, findMinimumUnsignedValue(call->getArgOperand(argOperand), call->getFunction(), MAM)}; 
 }
 
 static std::pair<llvm::APInt, llvm::APInt> boundsOfCTypeFunc() {
@@ -115,6 +115,9 @@ const decltype(builtinLibcCallToBounds) builtinLibcCallToBounds {
     {"mmap2", nullptr},
     {"mmap64", [] (llvm::Module& module, llvm::ModuleAnalysisManager& MAM, llvm::CallBase* callInst) -> std::pair<llvm::APInt, llvm::APInt> { 
         return findMmapBounds(callInst, MAM);
+    }},
+    {"memalign", [] (llvm::Module& module, llvm::ModuleAnalysisManager& MAM, llvm::CallBase* callInst) -> std::pair<llvm::APInt, llvm::APInt> {
+        return boundsOfMallocLike(callInst, MAM, 1);
     }},
     {"aligned_alloc", nullptr},
     {"alloca", nullptr}, // handled as LLVM alloca instruction
@@ -157,7 +160,9 @@ const decltype(builtinLibcCallToBounds) builtinLibcCallToBounds {
     }},
     {"gcry_strerror", nullptr},
     {"gcry_strsource", nullptr},
-    {"getgrgid", nullptr},
+    {"getgrgid", [] (llvm::Module& module, llvm::ModuleAnalysisManager& MAM, llvm::CallBase* callInst) -> std::pair<llvm::APInt, llvm::APInt> {
+        return boundsOfReturnedPointeeType(callInst);
+    }},
     {"getgrnam", [] (llvm::Module& module, llvm::ModuleAnalysisManager& MAM, llvm::CallBase* callInst) -> std::pair<llvm::APInt, llvm::APInt> {
         return boundsOfReturnedPointeeType(callInst);
     }},
@@ -171,7 +176,9 @@ const decltype(builtinLibcCallToBounds) builtinLibcCallToBounds {
     {"getpwnam", [] (llvm::Module& module, llvm::ModuleAnalysisManager& MAM, llvm::CallBase* callInst) -> std::pair<llvm::APInt, llvm::APInt> {
         return boundsOfReturnedPointeeType(callInst);
     }},
-    {"getpwuid", nullptr},
+    {"getpwuid", [] (llvm::Module& module, llvm::ModuleAnalysisManager& MAM, llvm::CallBase* callInst) -> std::pair<llvm::APInt, llvm::APInt> {
+        return boundsOfReturnedPointeeType(callInst);
+    }},
     {"getservbyname", nullptr},
     {"getservbyport", nullptr},
     {"getspnam", nullptr},
@@ -338,7 +345,6 @@ const decltype(builtinLibcCallToBounds) builtinLibcCallToBounds {
     {"__cxa_allocate_exception", [] (llvm::Module& module, llvm::ModuleAnalysisManager& MAM, llvm::CallBase* call) -> std::pair<llvm::APInt, llvm::APInt> {
         return boundsOfMallocLike(call, MAM);
     }},	// allocate an exception
-    {"memalign", nullptr},
     {"valloc", nullptr},
     {"SRE_LockCreate", nullptr},
     {"VOS_MemAlloc", nullptr},

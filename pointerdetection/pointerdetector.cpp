@@ -44,7 +44,8 @@ void PointerDetector::identify_start_pointers(llvm::Module& module) {
     for (auto& func : module) {
         for (auto& bb : func) {
             for (auto& inst : bb) {
-                if (isNonWrapperAllocSite(&inst))
+                // some people declare mmap() as returning "int". Blame autotools
+                if (isNonWrapperAllocSite(&inst) && module.getDataLayout().getTypeSizeInBits(inst.getType()) == 64)
                     mark_value(&inst, POINTER);
 
                 if (auto callInst = llvm::dyn_cast<llvm::CallBase>(&inst)) {

@@ -1,3 +1,4 @@
+#include <iostream>
 #include <llvm-utils/pointerdetection/pointerdetection.h>
 
 #include <llvm-utils/util.h>
@@ -150,6 +151,9 @@ std::pair<llvm::Value*, bool> PointerDetector::find_real_base(llvm::Value *arith
                 default:
                     HANDLE_UNKOWN_VALUE(constExpr);
             }
+        } else if (auto function = llvm::dyn_cast<llvm::Function>(current)) {
+            // I know it's cursed, but CMake's "is symbol defined" sample programs do load from function addresses
+            done = true;
         } else {
             HANDLE_UNKOWN_VALUE(current);
         }
