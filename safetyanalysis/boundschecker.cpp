@@ -176,6 +176,7 @@ BoundsChecker::IsInBoundsResult BoundsChecker::isInBounds_internal(llvm::Value* 
             // check whether we can context-sensitively analyze this call
             if (!callStack.empty()) {
                 auto caller = callStack.pop_back_val();
+                defer (callStack.push_back(caller));
                 // sanity check that we were really called from the latest callsite in the call stack
                 if (auto calledFunc = caller->getCalledFunction()) // maybe we can look through some indirect calls in the future, too
                     ASSERT_ELSE_UNKOWN(calledFunc == argument->getParent(), argument);
@@ -218,12 +219,13 @@ BoundsChecker::IsInBoundsResult BoundsChecker::isInBounds_internal(llvm::Value* 
 
                 // push this callsite to the callstack to inform later analysis on Arguments that they can 
                 //  simply return back to this callsite
-                auto size = callStack.size();
                 callStack.push_back(call);
+                auto size = callStack.size();
                 defer (
                     // clear everything in the callstack after (and including) this frame
-                    while (callStack.size() > size) 
-                        callStack.pop_back();
+                    ASSERT_ELSE_UNKOWN(callStack.size() == size, call);
+                    ASSERT_ELSE_UNKOWN(callStack.back() == call, call);
+                    callStack.pop_back();
                 );
 
                 // check if all return values happen to be in bounds, if so we gucci
