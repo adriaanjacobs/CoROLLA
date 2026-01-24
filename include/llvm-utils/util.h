@@ -23,9 +23,17 @@
 
 void dumpModuleToFile(llvm::Module& module, std::string_view name);
 
-llvm::Module* moduleOf(llvm::Value* val);
+const llvm::Module* moduleOf(const llvm::Value* val);
+inline llvm::Module* moduleOf(llvm::Value* val) {
+    const llvm::Value* const_val = val;
+    return const_cast<llvm::Module*>(moduleOf(const_val));
+}
 
-llvm::Function* functionOf(llvm::Value* val);
+const llvm::Function* functionOf(const llvm::Value* val);
+inline llvm::Function* functionOf(llvm::Value* val) {
+    const llvm::Value* const_val = val;
+    return const_cast<llvm::Function*>(functionOf(const_val));
+}
 
 #define HANDLE_UNKOWN_VALUE(_val)                                                                               \
     do {                                                                                                        \

@@ -5,20 +5,15 @@
 #include <llvm/IR/PassManager.h>
 #include <llvm/Analysis/LoopAnalysisManager.h>
 #include <llvm/IR/Instructions.h>
-#include <array>
 #include <string>
-#include <map>
 
-#include <functional>
 #include <llvm/IR/Operator.h>
-#include <optional>
 #include <llvm/Analysis/MustExecute.h>
 #include <llvm/Analysis/LoopInfo.h>
 #include <llvm/IR/Dominators.h>
 #include <llvm/Analysis/PostDominators.h>
 #include <llvm/Analysis/ScalarEvolutionExpressions.h>
 
-#include <array>
 #include <experimental/array>
 
 void dumpModuleToFile(llvm::Module& module, std::string_view name) {
@@ -30,7 +25,7 @@ void dumpModuleToFile(llvm::Module& module, std::string_view name) {
 }
 
 // adapted from 'getModuleFromVal' in LLVM's AsmWriter.cpp
-llvm::Module* moduleOf(llvm::Value* val) {
+const llvm::Module* moduleOf(const llvm::Value* val) {
     using namespace llvm;
     if (auto arg = dyn_cast<Argument>(val))
         return arg->getParent() ? arg->getParent()->getParent() : nullptr;
@@ -57,7 +52,7 @@ llvm::Module* moduleOf(llvm::Value* val) {
     return nullptr;
 }
 
-llvm::Function* functionOf(llvm::Value* val) {
+const llvm::Function* functionOf(const llvm::Value* val) {
     assert(val);
     if (auto inst = llvm::dyn_cast<llvm::Instruction>(val)) {
         if (!inst->getParent())
