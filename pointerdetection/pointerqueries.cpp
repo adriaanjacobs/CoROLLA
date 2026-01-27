@@ -1,4 +1,3 @@
-#include <iostream>
 #include <llvm-utils/pointerdetection/pointerdetection.h>
 
 #include <llvm-utils/util.h>
@@ -295,4 +294,31 @@ std::optional<llvm::APInt> PointerDetector::findConstantOffset(llvm::BinaryOpera
     }
 
     return std::nullopt;
+}
+
+llvm::Value* PointerDetector::find_simple_base_pointer(llvm::Value* val) {
+    if (auto gep = llvm::dyn_cast<llvm::GEPOperator>(val)) {
+        return find_simple_base_pointer(gep->getPointerOperand());
+    } else if (auto binaryOp = llvm::dyn_cast<llvm::BinaryOperator>(val)) {
+        ASSERT_ELSE_UNKOWN(!llvm::isa<llvm::Constant>(binaryOp->getOperand(0)) 
+                        || !llvm::isa<llvm::Constant>(binaryOp->getOperand(1)), 
+        val);
+
+        if (llvm::isa<llvm::Constant>(binaryOp->getOperand(0)))
+            return find_simple_base_pointer(binaryOp->getOperand(1));
+        else if (llvm::isa<llvm::Constant>(binaryOp->getOperand(1)))
+            return find_simple_base_pointer(binaryOp->getOperand(0));
+
+        // give up, we don't know which side of the binaryOp is the ptr
+        return binaryOp;
+    } else if (llvm::isa<llvm::PtrToIntOperator, llvm::BitCastOperator>(val)) {
+        return find_simple_base_pointer(llvm::cast<llvm::Operator>(val)->getOperand(0));
+    } else if (auto intToPtr = llvm::dyn_cast<llvm::IntToPtrInst>(val)) {
+        return find_simple_base_pointer(intToPtr->getOperand(0));
+    } else if (llvm::isa<llvm::PHINode, llvm::LoadInst, llvm::CallBase, llvm::SelectInst, llvm::Argument, llvm::ExtractValueInst, llvm::ExtractElementInst, llvm::AllocaInst, llvm::Constant>(val)) {
+        // sources
+        return val;
+    } else {
+        HANDLE_UNKOWN_VALUE(val);
+    }
 }

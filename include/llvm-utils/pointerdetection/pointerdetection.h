@@ -60,6 +60,8 @@ struct PointerDetector {
     std::optional<llvm::APInt> findConstantOffset(llvm::BinaryOperator* binaryOp) const;
 
     PointerDetector(llvm::Module &M, llvm::ModuleAnalysisManager &MAM);
+
+    static llvm::Value* find_simple_base_pointer(llvm::Value* val);
     
 private:
     llvm::Module& module;
