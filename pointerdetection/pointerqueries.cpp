@@ -311,6 +311,14 @@ llvm::Value* PointerDetector::find_simple_base_pointer(llvm::Value* val) {
 
         // give up, we don't know which side of the binaryOp is the ptr
         return binaryOp;
+    } else if (auto castInst = llvm::dyn_cast<llvm::CastInst>(val)) {
+        auto& dataLayout = castInst->getModule()->getDataLayout();
+        ASSERT_ELSE_UNKOWN(dataLayout.getTypeSizeInBits(castInst->getDestTy()) == 64, castInst); // otherwise bug
+        if (dataLayout.getTypeSizeInBits(castInst->getSrcTy()) != 64)
+            return castInst;
+        return find_simple_base_pointer(castInst->getOperand(0));
+    } else if (auto freeze = llvm::dyn_cast<llvm::FreezeInst>(val)) {
+        return find_simple_base_pointer(freeze->getOperand(0));
     } else if (llvm::isa<llvm::PtrToIntOperator, llvm::BitCastOperator>(val)) {
         return find_simple_base_pointer(llvm::cast<llvm::Operator>(val)->getOperand(0));
     } else if (auto intToPtr = llvm::dyn_cast<llvm::IntToPtrInst>(val)) {
