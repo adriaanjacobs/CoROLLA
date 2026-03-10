@@ -84,7 +84,11 @@ llvm::Value* castToInt64Ty(llvm::Value* val, llvm::Instruction* insertBefore, ll
     llvm::Type* int64Ty = llvm::Type::getInt64Ty(insertBefore->getModule()->getContext());
     val = createBitOrPointerCastIfNecessary(val, int64Ty, name, insertBefore);
     assert(val->getType()->isIntegerTy());
+    #ifdef LLVM_VERSION_MAJOR
+    assert(insertBefore->getModule()->getDataLayout().getTypeSizeInBits(val->getType()).getFixedValue() == 64);
+    #else
     assert(insertBefore->getModule()->getDataLayout().getTypeSizeInBits(val->getType()).getFixedSize() == 64);
+    #endif
     return val;
 }
 
