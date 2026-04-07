@@ -1,9 +1,43 @@
 #pragma once
 
 #include <llvm-utils/util.h>
+
 #include <llvm/IR/Verifier.h>
+#include <llvm/Analysis/MemoryBuiltins.h>
 
 #include <optional>
+
+// Simple wrapper around LLVM's builtin ObjectSizeOffsetVisitor
+class OSOVAnalysis : public llvm::AnalysisInfoMixin<OSOVAnalysis> {
+public:
+    explicit OSOVAnalysis() = default;
+    ~OSOVAnalysis() = default;
+    // Provide a unique key, i.e., memory address to be used by the LLVM's pass
+    // infrastructure.
+    static llvm::AnalysisKey Key;
+    friend llvm::AnalysisInfoMixin<OSOVAnalysis>;
+
+    // Specify the result type of this analysis pass.
+    class Result {
+        [[maybe_unused]]
+        llvm::Function& F;
+        [[maybe_unused]]
+        llvm::FunctionAnalysisManager& FAM;
+        const llvm::DataLayout& DL;
+        llvm::ObjectSizeOffsetVisitor OSOV;
+        llvm::DenseSet<llvm::Use*> unsafeUses;
+
+        bool computeIsInBounds(llvm::Use*);
+
+    public:
+        Result(llvm::Function& F, llvm::FunctionAnalysisManager& FAM);
+
+        bool isInBounds(llvm::Use*);
+    };
+
+    // Analyze the bitcode/IR in the given LLVM module.
+    Result run(llvm::Function& F, [[maybe_unused]] llvm::FunctionAnalysisManager& FAM);
+};
 
 //===----------------------------------------------------------------------===//
 /// This class implements an LLVM module analysis pass.
