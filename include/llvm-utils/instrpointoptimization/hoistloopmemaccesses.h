@@ -73,7 +73,7 @@ public:
     LoopHoister(llvm::Module& M, llvm::ModuleAnalysisManager& MAM);
 
     // Maximally hoist logs in loops into preheaders
-    void hoistLoopBoundMemAccesses(llvm::DenseMap<llvm::Function*, llvm::DenseMap<llvm::Use*, InstrumentationPoint*>>& funcToInstPoints, bool permitNonMustExecute = false);
+    void hoistLoopBoundMemAccesses(llvm::DenseMap<llvm::Function*, llvm::DenseMap<llvm::Use*, InstrumentationPoint*>>& funcToInstPoints, bool permitNonMustExecute = false, const PointerDetector* pointerDetector = nullptr);
 };
 
 

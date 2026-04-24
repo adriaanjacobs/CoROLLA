@@ -416,11 +416,10 @@ LoopHoister<llvm::Module>::LoopHoister(llvm::Module& M, llvm::ModuleAnalysisMana
     module{M}, MAM{MAM}
 {}
 
-void LoopHoister<llvm::Module>::hoistLoopBoundMemAccesses(llvm::DenseMap<llvm::Function*, llvm::DenseMap<llvm::Use*, InstrumentationPoint*>>& funcToInstPoints, bool permitNonMustExecute) {
-    auto& pointerDetector = MAM.getResult<PointerDetectionAnalysis>(module);
+void LoopHoister<llvm::Module>::hoistLoopBoundMemAccesses(llvm::DenseMap<llvm::Function*, llvm::DenseMap<llvm::Use*, InstrumentationPoint*>>& funcToInstPoints, bool permitNonMustExecute, const PointerDetector* pointerDetector) {
     LoopHoister<llvm::Function>::Stats stats{};
     for (auto& [func, useToPoint] : funcToInstPoints) {
-        auto [it, inserted] = funcHoisters.try_emplace(func, *func, getFAM(module, MAM), &pointerDetector);
+        auto [it, inserted] = funcHoisters.try_emplace(func, *func, getFAM(module, MAM), pointerDetector);
         auto funcStats = it->second.hoistLoopBoundMemAccesses(useToPoint, permitNonMustExecute);
         stats += funcStats;
     }
