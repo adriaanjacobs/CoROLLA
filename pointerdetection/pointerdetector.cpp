@@ -433,7 +433,7 @@ void PointerDetector::mark_pointer_origins(llvm::Value* pointer) {
             toMark.push_back({current, POINTER});
         } else if (auto loadInst = llvm::dyn_cast<llvm::LoadInst>(current)) {
             auto& rds = MAM.getResult<ReachingDefinitionsAnalysis>(module);
-            if (auto def = rds.findDefForLoad(loadInst, this)) {
+            if (auto def = rds.findDefForLoad(loadInst, std::bind_front(&PointerDetector::strip_pointer_casts, this))) {
                 current = def;
                 toMark.push_back({def, POINTER});
             } else {
