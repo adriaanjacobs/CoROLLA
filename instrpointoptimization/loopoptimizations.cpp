@@ -117,6 +117,19 @@ LoopHoister<llvm::Function>::Stats LoopHoister<llvm::Function>::hoistLoopBoundMe
         if (llvm::isa<llvm::UnreachableInst, llvm::ReturnInst>(bb.getTerminator()))
             funcTerminators.insert(bb.getTerminator());
 
+    if (function.doesNotReturn()) {
+        // special case: some infinitely looping functions do not have returns/unreachables
+        //  in this case, we just consider the latch the functerminator
+        auto& loopInfo = FAM.getResult<llvm::LoopAnalysis>(function);
+        for (auto loop : loopInfo) {
+            if (loop->hasNoExitBlocks()) {
+                ASSERT_ELSE_UNKOWN(loop->isLoopSimplifyForm(), &function);
+                funcTerminators.insert(loop->getLoopLatch()->getTerminator());
+            }
+        }
+    }
+    ASSERT_ELSE_UNKOWN(!funcTerminators.empty(), &function);
+
     llvm::DenseMap<llvm::Use*, InstrumentationPoint*> surrogateUseToPoint;
 
     do {
