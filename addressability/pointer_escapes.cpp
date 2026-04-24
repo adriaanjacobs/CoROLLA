@@ -1,6 +1,9 @@
 #include <llvm-utils/addressability/addressability.h>
 
-void collectIntraProceduralPtrEscapes(llvm::Value* ptr, llvm::DenseSet<llvm::Use*> ptrEscapes, const PointerDetector& pointerInfo) {
+#include <llvm-utils/util.h>
+#include <llvm-utils/pointerdetection/pointerdetection.h>
+
+void collectIntraProceduralPtrEscapes(llvm::Value* ptr, llvm::DenseSet<llvm::Use*>& ptrEscapes, const PointerDetector* pointerInfo) {
     static thread_local std::vector<llvm::Value*> passedInstrs;
     const auto size = passedInstrs.size();
     run_on_destruct resetPassedInstrs([&](){
@@ -42,9 +45,13 @@ void collectIntraProceduralPtrEscapes(llvm::Value* ptr, llvm::DenseSet<llvm::Use
             //  the previous conditions are not perfectly met
             ptrEscapes.insert(&ptrUse);
         } else if (auto binaryOp = llvm::dyn_cast<llvm::BinaryOperator>(user)) {
-            auto pointerStatus = pointerInfo.handle_unconfirmed_binaryOp(binaryOp);
             using enum PointerDetector::ValueType;
-            auto value = pointerStatus.has_value() ? *pointerStatus : NEGATED_POINTER;
+            auto pointerStatus = pointerInfo 
+                ? pointerInfo->handle_unconfirmed_binaryOp(binaryOp) 
+                : std::nullopt;
+            auto value = pointerStatus.has_value() 
+                ? *pointerStatus 
+                : NEGATED_POINTER;
             switch (value) {
                 case NEGATED_POINTER:
                 case DOUBLE_POINTER:    // some opaque thing we don't understand
@@ -87,7 +94,9 @@ void collectIntraProceduralPtrEscapes(llvm::Value* ptr, llvm::DenseSet<llvm::Use
                 ASSERT_ELSE_UNKOWN(gep->getNumIndices() == 1, gep);
                 // somehow another pointer being used as the index in the gep?
                 //  is the pointeroperand an index or something?
-                auto pointerOperandStatus = pointerInfo.is_unconfirmed_pointer(gep->getPointerOperand());
+                auto pointerOperandStatus = pointerInfo 
+                    ? pointerInfo->is_unconfirmed_pointer(gep->getPointerOperand())
+                    : std::nullopt;
                 using enum PointerDetector::ValueType;
                 if (pointerOperandStatus.has_value()) {
                     if (*pointerOperandStatus == POINTER)

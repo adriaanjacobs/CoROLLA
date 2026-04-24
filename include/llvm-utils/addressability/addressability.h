@@ -1,12 +1,12 @@
 #pragma once
 
-#include <llvm-utils/safetyanalysis/safetyanalysis.h>
 #include <llvm-utils/callsiteanalysis/callsiteanalysis.h>
-#include <llvm-utils/pointerdetection/pointerdetection.h>
+
+#include <optional>
 
 // interprocedural def-use walk to see what instructions this allocSites flows to
 //  mostly used to prune out safe stack allocations
-bool ptrMayReachUnsafeAccesses(llvm::Value* ptr, const UnsafeAccessInfo& unsafeAccessInfo, const CallSiteAnalysisResult& callSiteAnalysis);
+bool ptrMayReachUnsafeAccesses(llvm::Value* ptr, const llvm::DenseSet<llvm::Instruction*>& unsafeAccesses, bool onlyStores, const CallSiteAnalysisResult& callSiteAnalysis);
 
 // internalize a bunch of functions that may be called indirectly/from external code
 //  according to CallSiteAnalysis

@@ -7,7 +7,7 @@
 //  mostly used to prune out safe stack allocations
 //  "safe"/"unsafe" is kind of an over-statement here
 //  more like "may be used as pointer operand in the unsafeaccesses"
-bool ptrMayReachUnsafeAccesses(llvm::Value* ptr, const UnsafeAccessInfo& unsafeAccessInfo, const CallSiteAnalysisResult& callSiteAnalysis) {
+bool ptrMayReachUnsafeAccesses(llvm::Value* ptr, const llvm::DenseSet<llvm::Instruction*>& unsafeAccesses, bool onlyStores, const CallSiteAnalysisResult& callSiteAnalysis) {
     // special case: public globals may always reach unsafe accesses
     if (auto globalValue = llvm::dyn_cast<llvm::GlobalValue>(ptr)) {
         // appending linkage is an LLVM thing that only makes sense for LLVM-visible symbols
@@ -31,7 +31,6 @@ bool ptrMayReachUnsafeAccesses(llvm::Value* ptr, const UnsafeAccessInfo& unsafeA
 
     passedInstrs.push_back(ptr);
     
-    auto& unsafeAccesses = unsafeAccessInfo.unsafeAccesses;
     for (auto& use : ptr->uses()) {
         auto const user = use.getUser();
         bool isUnsafeUse = [&] () {
@@ -58,28 +57,28 @@ bool ptrMayReachUnsafeAccesses(llvm::Value* ptr, const UnsafeAccessInfo& unsafeA
                     return true;
                 ASSERT_ELSE_UNKOWN(call->getCalledOperand() != ptr, call);
                 // the onlyreadsmemory also implies nocapture (?)
-                if (unsafeAccessInfo.onlyStores && calledFunc->onlyReadsMemory())
+                if (onlyStores && calledFunc->onlyReadsMemory())
                     return false;
                 auto calledArgIdx = call->getArgOperandNo(&use);
                 if (calledArgIdx >= calledFunc->arg_size())
                     return true;
                 auto formalArg = calledFunc->getArg(calledArgIdx);
                 // readonly implies nocapture (?)
-                if (unsafeAccessInfo.onlyStores && formalArg->hasAttribute(llvm::Attribute::ReadOnly))
+                if (onlyStores && formalArg->hasAttribute(llvm::Attribute::ReadOnly))
                     return false;
                 if (calledFunc->isDeclaration()) // FIXME:: i should probably specify memcpy/memcmp/memmove here                
                     return true;
-                return ptrMayReachUnsafeAccesses(calledFunc->getArg(calledArgIdx), unsafeAccessInfo, callSiteAnalysis);
+                return ptrMayReachUnsafeAccesses(calledFunc->getArg(calledArgIdx), unsafeAccesses, onlyStores, callSiteAnalysis);
             } else if (auto ret = llvm::dyn_cast<llvm::ReturnInst>(user)) {
                 const auto& callSiteInfo = callSiteAnalysis.getCallSiteInfo(ret->getFunction());
                 if (!callSiteInfo.isOnlyDirectlyCalled())
                     return true;
                 for (auto callSite : callSiteInfo.directCallSites)
-                    if (ptrMayReachUnsafeAccesses(callSite, unsafeAccessInfo, callSiteAnalysis))
+                    if (ptrMayReachUnsafeAccesses(callSite, unsafeAccesses, onlyStores, callSiteAnalysis))
                         return true;
                 return false;
             } else if (llvm::isa<llvm::PHINode, llvm::SelectInst, llvm::BitCastOperator, llvm::PtrToIntOperator>(user)) {
-                return ptrMayReachUnsafeAccesses(user, unsafeAccessInfo, callSiteAnalysis);
+                return ptrMayReachUnsafeAccesses(user, unsafeAccesses, onlyStores, callSiteAnalysis);
             } else if (auto cast = llvm::dyn_cast<llvm::CastInst>(user)) {
                 switch (cast->getOpcode()) {
                     case llvm::Instruction::IntToPtr:
@@ -88,7 +87,7 @@ bool ptrMayReachUnsafeAccesses(llvm::Value* ptr, const UnsafeAccessInfo& unsafeA
                     case llvm::Instruction::ZExt:
                         if (cast->getModule()->getDataLayout().getTypeSizeInBits(cast->getType()) <= 32)
                             return false; // may miss things if stuff gets shifted around and re-added I think?
-                        return ptrMayReachUnsafeAccesses(cast, unsafeAccessInfo, callSiteAnalysis);
+                        return ptrMayReachUnsafeAccesses(cast, unsafeAccesses, onlyStores, callSiteAnalysis);
                     default:
                         HANDLE_UNKOWN_VALUE(cast);
                 }
@@ -97,7 +96,7 @@ bool ptrMayReachUnsafeAccesses(llvm::Value* ptr, const UnsafeAccessInfo& unsafeA
                 assert(notTheUser != user);
                 return !llvm::isa<llvm::ConstantData>(notTheUser); // catches trivial comparisons against MAP_FAILED or NULL
             } else if (llvm::isa<llvm::GEPOperator, llvm::BinaryOperator>(user)) {
-                return ptrMayReachUnsafeAccesses(user, unsafeAccessInfo, callSiteAnalysis); // any offset doesn't matter, later load/stores will query the safety status
+                return ptrMayReachUnsafeAccesses(user, unsafeAccesses, onlyStores, callSiteAnalysis); // any offset doesn't matter, later load/stores will query the safety status
             } else if (auto landingPad = llvm::dyn_cast<llvm::LandingPadInst>(user)) {
                 // this happens e.g. for type_info globals that are used in catch or filter clauses as the representation for the type of the exception
                 //  this is not the same as an icmp, since there is no expectation after this check that any IR-level data has the value of this global
