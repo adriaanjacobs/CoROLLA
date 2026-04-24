@@ -12,7 +12,9 @@ public:
         llvm::ModuleAnalysisManager& MAM;
         RDSInfo(llvm::Module&, llvm::ModuleAnalysisManager&);
 
-        llvm::Value* findDefForLoad(llvm::LoadInst* load, PointerDetector* pointerDetector = nullptr);
+        llvm::Value* findDefForLoad(llvm::LoadInst* load, std::function<llvm::Value*(llvm::Value*)> stripPointerCasts 
+                                                            = [] (llvm::Value* ptr) { return ptr->stripPointerCastsForAliasAnalysis(); }
+        );
         llvm::DenseSet<llvm::Value*> findDefsForExtractValue(llvm::ExtractValueInst* extractValue);
     };
 

@@ -1,8 +1,8 @@
 #include <llvm-utils/reachability/reachingdefinitions.h>
 
-#include <llvm-utils/reachability/cfg_reachability.h>
 #include <llvm-utils/util.h>
-#include <llvm-utils/pointerdetection/pointerdetection.h>
+#include <llvm-utils/reachability/cfg_reachability.h>
+#include <llvm/Analysis/AliasAnalysis.h>
 
 llvm::AnalysisKey ReachingDefinitionsAnalysis::Key;
 
@@ -10,21 +10,17 @@ RDSInfo::RDSInfo(llvm::Module& module, llvm::ModuleAnalysisManager& MAM) :
     module{module}, MAM{MAM}
 {}
 
-llvm::Value* RDSInfo::findDefForLoad(llvm::LoadInst* load, PointerDetector* pointerDetector) {
+llvm::Value* RDSInfo::findDefForLoad(llvm::LoadInst* load, std::function<llvm::Value*(llvm::Value*)> stripPointerCasts) {
     auto& dataLayout = load->getModule()->getDataLayout();
     ASSERT_ELSE_UNKOWN(dataLayout.getTypeSizeInBits(load->getType()) == 64, load);
 
-    if (!pointerDetector)
-        pointerDetector = MAM.getCachedResult<PointerDetectionAnalysis>(module);
-    assert(pointerDetector);
-
     // a makeshift quick and dirty intra-block definition analysis for this load, catches really trivial cases, especially on load/stores through globals
-    auto stripPtrOperand = pointerDetector->strip_pointer_casts(load->getPointerOperand());
+    auto stripPtrOperand = stripPointerCasts(load->getPointerOperand());
     llvm::Instruction* potDef = load;
     while ((potDef = potDef->getPrevNode())) {
         auto& aamanager = getFAM(module, MAM).getResult<llvm::AAManager>(*load->getFunction());
         if (auto storeInst = llvm::dyn_cast<llvm::StoreInst>(potDef)) {
-            if (pointerDetector->strip_pointer_casts(storeInst->getPointerOperand()) == stripPtrOperand) { // as crazy as it looks, it actually happens in real code
+            if (stripPointerCasts(storeInst->getPointerOperand()) == stripPtrOperand) { // as crazy as it looks, it actually happens in real code
                 if (dataLayout.getTypeSizeInBits(storeInst->getValueOperand()->getType()) == 64) // otherwise this is a partial overwrite (<64) or an unanalyzable store of an aggregate (>64)
                     return storeInst->getValueOperand();
                 else return nullptr;
