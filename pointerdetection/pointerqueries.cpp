@@ -22,7 +22,7 @@ llvm::Value* findLoopBoundPHIBase(llvm::PHINode* phi, llvm::ScalarEvolution& SCE
     return base;
 }
 
-std::pair<llvm::Value*, bool> PointerDetector::find_real_base(llvm::Value *arithmetic) const {
+BasePtrInfo PointerDetector::find_real_base(llvm::Value *arithmetic) const {
     static thread_local std::vector<const llvm::Value*> passedInstrs;
     const auto size = passedInstrs.size();
     run_on_destruct resetPassedInstrs([&](){
@@ -296,26 +296,29 @@ std::optional<llvm::APInt> PointerDetector::findConstantOffset(llvm::BinaryOpera
     return std::nullopt;
 }
 
-llvm::Value* PointerDetector::find_simple_base_pointer(llvm::Value* val) {
+BasePtrInfo PointerDetector::find_simple_base_pointer(llvm::Value* val) {
     if (auto gep = llvm::dyn_cast<llvm::GEPOperator>(val)) {
-        return find_simple_base_pointer(gep->getPointerOperand());
+        return find_simple_base_pointer(gep->getPointerOperand())
+                .orModified(!gep->hasAllZeroIndices());
     } else if (auto binaryOp = llvm::dyn_cast<llvm::BinaryOperator>(val)) {
         ASSERT_ELSE_UNKOWN(!llvm::isa<llvm::Constant>(binaryOp->getOperand(0)) 
                         || !llvm::isa<llvm::Constant>(binaryOp->getOperand(1)), 
         val);
 
-        if (llvm::isa<llvm::Constant>(binaryOp->getOperand(0)))
-            return find_simple_base_pointer(binaryOp->getOperand(1));
-        else if (llvm::isa<llvm::Constant>(binaryOp->getOperand(1)))
-            return find_simple_base_pointer(binaryOp->getOperand(0));
+        if (auto constOffset = llvm::dyn_cast<llvm::Constant>(binaryOp->getOperand(0))) 
+            return find_simple_base_pointer(binaryOp->getOperand(1))
+                    .orModified(!constOffset->isZeroValue());
+        else if (auto constOffset = llvm::dyn_cast<llvm::Constant>(binaryOp->getOperand(1))) 
+            return find_simple_base_pointer(binaryOp->getOperand(0))
+                    .orModified(!constOffset->isZeroValue());
 
         // give up, we don't know which side of the binaryOp is the ptr
-        return binaryOp;
+        return {binaryOp, false};
     } else if (auto castInst = llvm::dyn_cast<llvm::CastInst>(val)) {
         auto& dataLayout = castInst->getModule()->getDataLayout();
         ASSERT_ELSE_UNKOWN(dataLayout.getTypeSizeInBits(castInst->getDestTy()) == 64, castInst); // otherwise bug
         if (dataLayout.getTypeSizeInBits(castInst->getSrcTy()) != 64)
-            return castInst;
+            return {castInst, false}; // we could also return {val, true} here
         return find_simple_base_pointer(castInst->getOperand(0));
     } else if (auto freeze = llvm::dyn_cast<llvm::FreezeInst>(val)) {
         return find_simple_base_pointer(freeze->getOperand(0));
@@ -325,7 +328,7 @@ llvm::Value* PointerDetector::find_simple_base_pointer(llvm::Value* val) {
         return find_simple_base_pointer(intToPtr->getOperand(0));
     } else if (llvm::isa<llvm::PHINode, llvm::LoadInst, llvm::CallBase, llvm::SelectInst, llvm::Argument, llvm::ExtractValueInst, llvm::ExtractElementInst, llvm::AllocaInst, llvm::Constant>(val)) {
         // sources
-        return val;
+        return {val, false};
     } else {
         HANDLE_UNKOWN_VALUE(val);
     }

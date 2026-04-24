@@ -30,6 +30,17 @@ public:
     Result run(llvm::Module &M, [[maybe_unused]] llvm::ModuleAnalysisManager &MAM);
 };
 
+struct BasePtrInfo {
+    llvm::Value* basePtr;
+    bool wasOffseted;
+
+    BasePtrInfo& orModified(bool value) {
+        if (value)
+            wasOffseted = true;
+        return *this;
+    }
+};
+
 //===----------------------------------------------------------------------===//
 /// This class implements an LLVM module analysis pass.
 ///
@@ -46,7 +57,6 @@ struct PointerDetector {
     bool is_confirmed_pointer(llvm::Value* val) const { return pointers.contains(val); }
     std::optional<ValueType> is_unconfirmed_pointer(llvm::Value* val) const;
     llvm::Value* strip_pointer_casts(llvm::Value* pointer) const;
-    std::pair<llvm::Value*, bool> find_real_base(llvm::Value *arithmetic) const;
     template<typename T>
     std::optional<ValueType> handle_unconfirmed_binaryOp(T* binaryOp) const;
 
@@ -61,7 +71,8 @@ struct PointerDetector {
 
     PointerDetector(llvm::Module &M, llvm::ModuleAnalysisManager &MAM);
 
-    static llvm::Value* find_simple_base_pointer(llvm::Value* val);
+    BasePtrInfo find_real_base(llvm::Value *arithmetic) const;
+    static BasePtrInfo find_simple_base_pointer(llvm::Value* val);
     
 private:
     llvm::Module& module;
