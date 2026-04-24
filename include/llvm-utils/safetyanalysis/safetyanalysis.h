@@ -54,6 +54,7 @@ public:
         // "is this dangerously out of bounds?" / "may this access out-of-bounds memory without crashing?"
         // because provably unmapped memory (like NULL) is still considered in bounds
         bool isInBounds(llvm::Value* offsetPtr, llvm::APInt offset = llvm::APInt{64,0});
+        bool isInBounds(llvm::Use* offsetPtrUse, llvm::APInt offset = llvm::APInt{64,0});
 
         // does not update cache, does not update bailstats. Useful for non-isinbounds range queries
         bool isInRange_nonCached(llvm::Value* offsetPtr, llvm::APInt offset, const std::function<std::optional<bool>(llvm::Value*, llvm::APInt, DIRECTION)>& isInRange);

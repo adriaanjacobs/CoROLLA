@@ -38,6 +38,10 @@ void BoundsChecker::printBailStats() {
     bailStats = statsCpy;
 }
 
+bool BoundsChecker::isInBounds(llvm::Use* offsetPtrUse, llvm::APInt offset) {
+    return isInBounds(offsetPtrUse->get(), offset);
+}
+
 bool BoundsChecker::isInBounds(llvm::Value* offsetPtr, llvm::APInt storeSize) {
     assert(callStack.empty()); // otherwise we didnt clear something in time
     auto [ptrIt, ptrInserted] = boundsCache.try_emplace(offsetPtr);
