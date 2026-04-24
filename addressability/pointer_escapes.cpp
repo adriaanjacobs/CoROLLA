@@ -142,6 +142,16 @@ void collectIntraProceduralPtrEscapes(llvm::Value* ptr, llvm::DenseSet<llvm::Use
             collectIntraProceduralPtrEscapes(inst, ptrEscapes, pointerInfo);
             inst->replaceAllUsesWith(constExpr);
             inst->deleteValue();
+        } else if (auto insertElementInst = llvm::dyn_cast<llvm::InsertElementInst>(user)) {
+            // we consider this an escape, since the resulting vector is potentially not homogeneous (not all containing the same pointer value)
+            //  our vector<ptr> tracking (extractelement, shufflevector) is only sound for homogeneous vectors! 
+            //  (since the entire vector shares the same provenance in that case)
+            ptrEscapes.insert(&ptrUse);
+        } else if (auto extractElement = llvm::dyn_cast<llvm::ExtractElementInst>(user)) {
+            // `0` is vector operand, this has to be a vector of pointers in our case
+            ASSERT_ELSE_UNKOWN(ptrUse == extractElement->getOperandUse(0), extractElement);
+            // due to our insertValue handling, all vectors are homogeneous
+            collectIntraProceduralPtrEscapes(extractElement, ptrEscapes, pointerInfo);
         } else HANDLE_UNKOWN_VALUE(user);
     }
 }
