@@ -14,4 +14,25 @@ bool ptrMayReachUnsafeAccesses(llvm::Value* ptr, const UnsafeAccessInfo& unsafeA
 // the "internalized" functions are suitable for invasive transformations like signature changes etc.
 llvm::DenseMap<llvm::Function*, llvm::Function*> wrapAddressTakenFuncs(llvm::Module& module, llvm::ModuleAnalysisManager& MAM);
 
-void collectIntraProceduralPtrEscapes(llvm::Value* ptr, llvm::DenseSet<llvm::Use*> ptrEscapes, const PointerDetector& pointerInfo);
+struct PointerDetector;
+struct BasePtrInfo;
+
+void collectIntraProceduralPtrEscapes(llvm::Value* ptr, llvm::DenseSet<llvm::Use*>& ptrEscapes, const PointerDetector* pointerInfo = nullptr);
+
+struct BasePtrTracker {
+    struct BasePtrTrackerInfo {
+        llvm::Value* baseTracker;
+        std::optional<bool> isModified;
+    };
+    std::function<BasePtrInfo(llvm::Value*)> findBasePtr;
+    std::function<llvm::Value*(llvm::Value*)> insertAtBase;
+    llvm::DenseMap<llvm::Value*, BasePtrTrackerInfo> cachedTrackers;
+
+    BasePtrTracker(std::function<BasePtrInfo(llvm::Value*)> find_base_ptr, std::function<llvm::Value*(llvm::Value*)> insertAtBase = [] (llvm::Value* ptr) { return ptr; });
+
+    // propagates intraprocedural base pointers (arguments, loads, calls, ...) through merges (select, phi) 
+    // and returns a variable representing the value of the base pointer when `ptr` is live
+    //  or the result of a custom computation if `insertAtBase` was specified
+    BasePtrTrackerInfo trackBasePtr(llvm::Value* ptr);
+};
+
