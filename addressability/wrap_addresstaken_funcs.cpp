@@ -1,4 +1,4 @@
-#include <llvm-utils/addressability/addressability.h>
+#include <corolla/addressability/addressability.h>
 
 llvm::Function* internalizeAndWrap(llvm::Function* func, const llvm::DenseSet<llvm::Use*>& usesToUpdate, llvm::StringRef suffix = "_internalized") {
     // drop the linkage on the original func & change its name

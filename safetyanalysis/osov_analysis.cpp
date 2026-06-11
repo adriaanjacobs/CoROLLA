@@ -1,7 +1,7 @@
-#include <llvm-utils/safetyanalysis/safetyanalysis.h>
+#include <corolla/safetyanalysis/safetyanalysis.h>
 
-#include <llvm-utils/util.h>
-#include <llvm-utils/instrpointoptimization/dominationpruning.h>
+#include <corolla/util.h>
+#include <corolla/instrpointoptimization/dominationpruning.h>
 
 llvm::AnalysisKey OSOVAnalysis::Key;
 

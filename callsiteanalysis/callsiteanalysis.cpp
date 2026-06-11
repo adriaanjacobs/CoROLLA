@@ -1,6 +1,6 @@
-#include <llvm-utils/callsiteanalysis/callsiteanalysis.h>
+#include <corolla/callsiteanalysis/callsiteanalysis.h>
 
-#include <llvm-utils/util.h>
+#include <corolla/util.h>
 
 llvm::AnalysisKey CallSiteAnalysis::Key;
 

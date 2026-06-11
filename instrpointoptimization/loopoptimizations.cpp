@@ -1,9 +1,9 @@
-#include <llvm-utils/instrpointoptimization/hoistloopmemaccesses.h>
+#include <corolla/instrpointoptimization/hoistloopmemaccesses.h>
 
-#include <llvm-utils/util.h>
-#include <llvm-utils/reachability/cfg_reachability.h>
-#include <llvm-utils/pointerdetection/pointerdetection.h>
-#include <llvm-utils/instrpointoptimization/dominationpruning.h>
+#include <corolla/util.h>
+#include <corolla/reachability/cfg_reachability.h>
+#include <corolla/pointerdetection/pointerdetection.h>
+#include <corolla/instrpointoptimization/dominationpruning.h>
 
 #include <llvm/Transforms/Utils/ScalarEvolutionExpander.h>
 #include <llvm/IR/Verifier.h>

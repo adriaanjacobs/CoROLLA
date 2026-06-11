@@ -1,7 +1,7 @@
-#include <llvm-utils/addressability/addressability.h>
+#include <corolla/addressability/addressability.h>
 
-#include <llvm-utils/callsiteanalysis/callsiteanalysis.h>
-#include <llvm-utils/safetyanalysis/safetyanalysis.h>
+#include <corolla/callsiteanalysis/callsiteanalysis.h>
+#include <corolla/safetyanalysis/safetyanalysis.h>
 
 // interprocedural def-use walk to see what instructions this allocSites flows to
 //  mostly used to prune out safe stack allocations

@@ -1,7 +1,7 @@
-#include <llvm-utils/addressability/addressability.h>
+#include <corolla/addressability/addressability.h>
 
-#include <llvm-utils/util.h>
-#include <llvm-utils/pointerdetection/pointerdetection.h>
+#include <corolla/util.h>
+#include <corolla/pointerdetection/pointerdetection.h>
 
 void collectIntraProceduralPtrEscapes(llvm::Value* ptr, llvm::DenseSet<llvm::Use*>& ptrEscapes, const PointerDetector* pointerInfo) {
     static thread_local std::vector<llvm::Value*> passedInstrs;

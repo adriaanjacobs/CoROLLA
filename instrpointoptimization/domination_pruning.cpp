@@ -1,7 +1,7 @@
-#include <llvm-utils/instrpointoptimization/dominationpruning.h>
+#include <corolla/instrpointoptimization/dominationpruning.h>
 
-#include <llvm-utils/util.h>
-#include <llvm-utils/reachability/cfg_reachability.h>
+#include <corolla/util.h>
+#include <corolla/reachability/cfg_reachability.h>
 
 bool pruneDominatedChecks(
     llvm::DenseMap<InstrumentationPoint*, llvm::DenseSet<llvm::Use*>>& pointToUses, 

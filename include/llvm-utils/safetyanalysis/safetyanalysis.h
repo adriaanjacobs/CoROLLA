@@ -1,6 +1,6 @@
 #pragma once
 
-#include <llvm-utils/util.h>
+#include <corolla/util.h>
 
 #include <llvm/IR/Verifier.h>
 #include <llvm/Analysis/MemoryBuiltins.h>

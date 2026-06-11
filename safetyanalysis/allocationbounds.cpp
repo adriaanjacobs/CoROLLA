@@ -1,6 +1,6 @@
-#include "llvm-utils/pointerdetection/pointerdetection.h"
-#include <llvm-utils/safetyanalysis/allocationbounds.h>
-#include <llvm-utils/util.h>
+#include "corolla/pointerdetection/pointerdetection.h"
+#include <corolla/safetyanalysis/allocationbounds.h>
+#include <corolla/util.h>
 
 #include <optional>
 

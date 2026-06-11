@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.5)
 
-project(llvm-utils)
+project(corolla)
 
 # exclude all targets here from default compilation. 
 # Build only those that a parent user depends on
@@ -40,7 +40,7 @@ add_subdirectory(reachability)
 add_subdirectory(safetyanalysis)
 add_subdirectory(addressability)
 
-# Convenience library to link in by users of llvm-utils
+# Convenience library to link in by users of corolla
 add_library(llvmutils INTERFACE)
 target_link_libraries(llvmutils INTERFACE
     util

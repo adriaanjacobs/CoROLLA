@@ -1,10 +1,10 @@
-#include <llvm-utils/pointerdetection/pointerdetection.h>
+#include <corolla/pointerdetection/pointerdetection.h>
 
-#include <llvm-utils/util.h>
-#include <llvm-utils/safetyanalysis/safetyanalysis.h>
-#include <llvm-utils/safetyanalysis/allocationbounds.h>
-#include <llvm-utils/reachability/reachingdefinitions.h>
-#include <llvm-utils/callsiteanalysis/callsiteanalysis.h>
+#include <corolla/util.h>
+#include <corolla/safetyanalysis/safetyanalysis.h>
+#include <corolla/safetyanalysis/allocationbounds.h>
+#include <corolla/reachability/reachingdefinitions.h>
+#include <corolla/callsiteanalysis/callsiteanalysis.h>
 
 #include <llvm/IR/Constants.h>
 #include <llvm/IR/Instructions.h>

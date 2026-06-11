@@ -1,7 +1,7 @@
 #pragma once
 
-#include <llvm-utils/util.h>
-#include <llvm-utils/reachability/cfg_reachability.h>
+#include <corolla/util.h>
+#include <corolla/reachability/cfg_reachability.h>
 
 struct ReachabilityGraph {
     llvm::DenseMap<llvm::Instruction*, llvm::DenseSet<llvm::Instruction*>> instToSuccs;

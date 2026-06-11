@@ -12,7 +12,7 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include <llvm-utils/breakconstantgeps/BreakConstantGEPs.h>
+#include <corolla/breakconstantgeps/BreakConstantGEPs.h>
 
 #include <llvm/IR/Operator.h>
 #define DEBUG_TYPE "break-constgeps"

@@ -1,7 +1,7 @@
-#include <llvm-utils/addressability/addressability.h>
+#include <corolla/addressability/addressability.h>
 
-#include <llvm-utils/util.h>
-#include <llvm-utils/pointerdetection/pointerdetection.h>
+#include <corolla/util.h>
+#include <corolla/pointerdetection/pointerdetection.h>
 
 #include <llvm/Support/FormatVariadic.h>
 
