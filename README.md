@@ -1,8 +1,13 @@
-# Collection of Reusable Out-Of-Tree LLVM Utilities
+# CoROLLA: <ins>Co</ins>llection of <ins>R</ins>eusable <ins>O</ins>ut-of-tree <ins>LL</ins>VM <ins>A</ins>uxiliaries
 
-> **NOTE**: If you are a student using this code, please do not make any of the code public anywhere without my explicit permission. Otherwise, have fun. 
+Suite of LLVM analyses and utilities, mostly for academic purposes. Many implement aggressive but sound versions of popular optimizations. Some examples:
+* [`safetyanalysis/`](/safetyanalysis/): domination pruning & interprocedural pointer safety analysis
+* [`instrpointoptimization/`](/instrpointoptimization): interproceduraloop hoisting 
+* [`callsiteanalysis/`](/callsiteanalysis/): sound callsite analysis
+* [`addressability/`](/addressability/): sound interprocedural escape analysis
+* [`reachability/`](/reachability/): instruction-granular intraprocedural reachability analysis
 
-This repo got split off from an older megarepo some months ago. Frequent updates and breakages are expected. Entirely unstable.
+Among others. 
 
 ## Building
 
@@ -22,13 +27,9 @@ cmake  ../ -DCMAKE_CXX_COMPILER=clang++-15 -DCMAKE_C_COMPILER=clang-15 -DLLVM_DI
 make -j
 ```
 
-Note that this code is only ever used with LLVM 15. In particular, there is no opaque pointer support (although it's not far away). Apart from that, there's no hard constraints on which version of LLVM this code could work with, with minor modifications. 
+Note that we mostly use this code with LLVM 15. Only the code in `safetyanalysis` still has a hard dependency on non-opaque pointers, everything else can likely be made to compile with other LLVM versions fairly painlessly. 
 
 ## Usage
-### Running
-Some of the subdirs contain dedicated pass runners. None of them do anything directly useful, I just use them for debugging and testing. Many of the libraries can be loaded into clang/opt, sometimes also at link time for LTO, but, again, none of them will do something useful with the analysis results. 
-
-### Linking
-The easiest way to use these utils is by linking to the `llvmutils` cmake target. 
+The easiest way to use these utils is by linking to the `llvmutils` interface cmake target. You can also link to individual components, and only the components you use will be built (to facilitate development using other LLVM verions). 
 
 Note that this code expects to link to the shared `libLLVM.so` megalib. If your usage code links to LLVM statically in any way, you will get "command-line option registered more than once" errors. Just link everything to `libLLVM.so` instead. 
