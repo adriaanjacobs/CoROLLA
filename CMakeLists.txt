@@ -41,8 +41,8 @@ add_subdirectory(safetyanalysis)
 add_subdirectory(addressability)
 
 # Convenience library to link in by users of corolla
-add_library(llvmutils INTERFACE)
-target_link_libraries(llvmutils INTERFACE
+add_library(corolla INTERFACE)
+target_link_libraries(corolla INTERFACE
     util
     breakconstantgeps
     callsiteanalysis
@@ -52,4 +52,4 @@ target_link_libraries(llvmutils INTERFACE
     safetyanalysis
     addressability
 )
-target_include_directories(llvmutils INTERFACE include/)
+target_include_directories(corolla INTERFACE include/)

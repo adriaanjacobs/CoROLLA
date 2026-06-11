@@ -30,6 +30,6 @@ make -j
 Note that we mostly use this code with LLVM 15. Only the code in `safetyanalysis` still has a hard dependency on non-opaque pointers, everything else can likely be made to compile with other LLVM versions fairly painlessly. 
 
 ## Usage
-The easiest way to use these utils is by linking to the `llvmutils` interface cmake target. You can also link to individual components, and only the components you use will be built (to facilitate development using other LLVM verions). 
+The easiest way to use these utils is by linking to the `corolla` interface cmake target. You can also link to individual components, and only the components you use will be built (to facilitate development using other LLVM verions). 
 
 Note that this code expects to link to the shared `libLLVM.so` megalib. If your usage code links to LLVM statically in any way, you will get "command-line option registered more than once" errors. Just link everything to `libLLVM.so` instead. 
