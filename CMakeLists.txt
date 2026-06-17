@@ -8,15 +8,12 @@ set_directory_properties(PROPERTIES EXCLUDE_FROM_ALL YES)
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
-find_package(LLVM 15 REQUIRED CONFIG)
+find_package(LLVM ${LLVM_PACKAGE_VERSION} REQUIRED CONFIG)
 message(STATUS "Found LLVM ${LLVM_PACKAGE_VERSION}")
 message(STATUS "Using LLVMConfig.cmake in: ${LLVM_DIR}")
-find_package(Clang REQUIRED)
+find_package(Clang ${LLVM_PACKAGE_VERSION} REQUIRED)
 message(STATUS "Found Clang ${Clang_PACKAGE_VERSION}")
 message(STATUS "Using ClangConfig.cmake in: ${Clang_DIR}")
-include_directories(${LLVM_INCLUDE_DIRS})
-
-set(clang_libs clang-cpp)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -29,7 +26,7 @@ add_compile_options(-O2)
 add_library(util SHARED util.cpp)
 target_link_libraries(util breakconstantgeps)
 # everyone depends on this, so everyone gets the include path
-target_include_directories(util PUBLIC include/)
+target_include_directories(util PUBLIC include/ ${LLVM_INCLUDE_DIRS})
 
 add_subdirectory(breakconstantgeps)
 add_subdirectory(compileOTF)

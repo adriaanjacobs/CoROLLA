@@ -124,6 +124,7 @@ inline llvm::LoopAnalysisManager& getLAM(llvm::Function& function, llvm::Functio
     return FAM.getResult<llvm::LoopAnalysisManagerFunctionProxy>(function).getManager();
 }
 
+#if LLVM_VERSION_MAJOR <= 15
 template<typename T>
 inline llvm::raw_ostream& operator << (llvm::raw_ostream& OS, const std::optional<T>& optVal) {
     if (optVal.has_value())
@@ -131,6 +132,7 @@ inline llvm::raw_ostream& operator << (llvm::raw_ostream& OS, const std::optiona
     else OS << "<empty optional>";
     return OS;
 }
+#endif
 
 llvm::MustBeExecutedContextExplorer getMustBeExecutedContextExplorer(llvm::FunctionAnalysisManager& FAM, bool forward, bool backward);
 
