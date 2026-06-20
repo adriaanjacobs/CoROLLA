@@ -8,10 +8,10 @@ set_directory_properties(PROPERTIES EXCLUDE_FROM_ALL YES)
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
-find_package(LLVM ${LLVM_PACKAGE_VERSION} REQUIRED CONFIG)
+find_package(LLVM REQUIRED CONFIG)
 message(STATUS "Found LLVM ${LLVM_PACKAGE_VERSION}")
 message(STATUS "Using LLVMConfig.cmake in: ${LLVM_DIR}")
-find_package(Clang ${LLVM_PACKAGE_VERSION} REQUIRED)
+find_package(Clang REQUIRED)
 message(STATUS "Found Clang ${Clang_PACKAGE_VERSION}")
 message(STATUS "Using ClangConfig.cmake in: ${Clang_DIR}")
 
