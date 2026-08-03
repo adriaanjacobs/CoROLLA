@@ -48,5 +48,6 @@ target_link_libraries(corolla INTERFACE
     reachability
     safetyanalysis
     addressability
+    baseptrtracker
 )
 target_include_directories(corolla INTERFACE include/)
