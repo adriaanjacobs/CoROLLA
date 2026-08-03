@@ -79,6 +79,39 @@ hasConstantGEP (Value * V)
 }
 
 //
+// Function: mustRemainConstant()
+//
+// Description:
+//  This function determines whether an operand is required to be a compile-time constant.
+//  Such operands must be left alone: turning them into instructions produces IR that no
+//  longer lowers.
+//
+//  We encountered this in inline assembly when running on the Linux kernel. Operands with an immediate or
+//  symbolic constraint ("i", "n", "s", "S", ...) have to stay Constants. 
+//  We skip all inline asm callsites, rather than parsing the constraint string
+//
+//  Intrinsics can express a similar requirement with the `immarg` parameter attribute.
+//
+// Inputs:
+//  I     - The instruction using the operand.
+//  index - The operand number to check.
+//
+static bool
+mustRemainConstant (Instruction * I, unsigned index)
+{
+    CallBase * call = llvm::dyn_cast<CallBase>(I);
+    if (!call)
+        return false;
+
+    if (call->isInlineAsm())
+        return true;
+
+    // arguments occupy the leading operands of a callsite, so the operand number doubles as the
+    //  argument number here
+    return index < call->arg_size() && call->paramHasAttr(index, Attribute::ImmArg);
+}
+
+//
 // Function: convertGEP()
 //
 // Description:
@@ -275,6 +308,8 @@ BreakConstantGEPs::runOnModule (Module & module)
                 Instruction * I = &(*i);
                 for (unsigned index = 0; index < I->getNumOperands(); ++index)
                 {
+                    if (mustRemainConstant (I, index))
+                        continue;
                     if (hasConstantGEP (I->getOperand(index)))
                     {
                         Worklist.push_back (I);
@@ -338,6 +373,8 @@ BreakConstantGEPs::runOnModule (Module & module)
                     // constant expressions immediently before the instruction using the
                     // constant expression.
                     //
+                    if (mustRemainConstant (I, index))
+                        continue;
                     if (ConstantExpr * CE = hasConstantGEP (I->getOperand(index)))
                     {
                         Instruction * NewInst = convertExpression (CE, I);
