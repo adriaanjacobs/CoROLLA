@@ -11,19 +11,17 @@ Among others.
 
 ## Building
 
-> **_NOTE:_** We assume that you installed LLVM and Clang in default system folders via [apt.llvm.org](apt.llvm.org) like so
+> **_NOTE:_** We assume that you installed LLVM in default system folders via [apt.llvm.org](apt.llvm.org) like so
 > ```bash
 > wget https://apt.llvm.org/llvm.sh
 > chmod +x llvm.sh
 > sudo ./llvm.sh 15
-> # also install clang dev
-> sudo apt install libclang-15-dev
 > ```
 
 Typical cmake workflow:
 ```bash
 mkdir build && cd build
-cmake  ../ -DCMAKE_CXX_COMPILER=clang++-15 -DCMAKE_C_COMPILER=clang-15 -DLLVM_DIR=/usr/lib/llvm-15/lib/cmake/ -DClang_DIR=/usr/lib/llvm-15/lib/cmake/clang/
+cmake  ../ -DCMAKE_CXX_COMPILER=clang++-15 -DCMAKE_C_COMPILER=clang-15 # -DLLVM_DIR=/usr/lib/llvm-15/lib/cmake/
 make -j
 ```
 

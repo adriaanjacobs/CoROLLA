@@ -18,9 +18,6 @@
 !breakconstantgeps/
 !breakconstantgeps/*
 
-!compileOTF/
-!compileOTF/*
-
 !instrpointoptimization/
 !instrpointoptimization/*
 
